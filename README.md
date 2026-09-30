@@ -24,6 +24,7 @@ Développée et maintenue par **SOYOO** pour Conforama.re et les sites e-commerc
    - **Téléphones** : Détection et normalisation automatique au format international **E.164** (+262 pour La Réunion / Mayotte, +33 pour la France métropolitaine).
    - **Emails** : Validation rigoureuse (`is_email`), passage en minuscules et dédoublonnage automatique avec fusion des données les plus complètes.
    - **Protection Anti-Injection CSV** : Neutralisation systématique des formules malveillantes Excel (`=`, `@`, `+`, `-`).
+   - **🚫 Exclusion Intelligente des Domaines Internes** : Détection et exclusion automatique du domaine du site courant et de `soyoo.re`, avec champ éditable permettant d'ajouter n'importe quel autre domaine à bannir (partenaires, collaborateurs). Persistance de la configuration en base de données.
 
 4. **Profils d'Export Prêts à l'Emploi** :
    - **🚀 Emailit Ready** : `email, first_name, last_name, phone, tags` (avec tags automatiques configurables, ex. `confo_client`, `confo_panier_abandonne`, `confo_newsletter`).

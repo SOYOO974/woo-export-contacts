@@ -143,4 +143,95 @@ class Woo_Export_Contacts_Sanitizer {
 
 		return $value;
 	}
+
+	/**
+	 * Analyse, nettoie et extrait une liste de domaines valides à exclure.
+	 * Accepte une chaîne multi-lignes, séparée par virgules ou points-virgules, ou un tableau.
+	 * Gère les variantes avec @, https://, www., sous-dossiers ou espaces.
+	 *
+	 * @param string|array|null $raw_domains Domaines bruts fournis.
+	 * @return array Liste unique de noms de domaine propres en minuscules.
+	 */
+	public static function parse_domains_list( $raw_domains ) {
+		if ( empty( $raw_domains ) ) {
+			return array();
+		}
+
+		if ( is_array( $raw_domains ) ) {
+			$raw_domains = implode( "\n", $raw_domains );
+		}
+
+		if ( ! is_string( $raw_domains ) ) {
+			return array();
+		}
+
+		$entries = preg_split( '/[\r\n,;\s]+/', $raw_domains, -1, PREG_SPLIT_NO_EMPTY );
+		$clean_domains = array();
+
+		foreach ( $entries as $entry ) {
+			$domain = strtolower( trim( $entry ) );
+
+			// Supprime le protocole (ex. https://, http://)
+			$domain = preg_replace( '#^https?://#i', '', $domain );
+
+			// Si une adresse e-mail complète a été saisie (ex. contact@domaine.re), on extrait le domaine
+			if ( false !== strpos( $domain, '@' ) ) {
+				$parts  = explode( '@', $domain );
+				$domain = end( $parts );
+			}
+
+			// Supprime les @, www. et points initiaux
+			$domain = ltrim( $domain, '@.' );
+			$domain = preg_replace( '/^www\./i', '', $domain );
+
+			// Supprime les ports (:8080) ou chemins (/page) éventuels
+			$domain = preg_replace( '/[:\/].*$/', '', $domain );
+
+			// Nettoyage des caractères non autorisés dans un domaine
+			$domain = preg_replace( '/[^a-z0-9.-]/', '', $domain );
+
+			// Supprime les points résiduels aux extrémités
+			$domain = trim( $domain, '.' );
+
+			if ( ! empty( $domain ) ) {
+				$clean_domains[] = $domain;
+			}
+		}
+
+		return array_values( array_unique( $clean_domains ) );
+	}
+
+	/**
+	 * Vérifie si une adresse e-mail appartient à l'un des domaines spécifiés (ou sous-domaines).
+	 *
+	 * @param string $email Adresse e-mail à vérifier.
+	 * @param array  $domains Liste des domaines assainis.
+	 * @return bool True si l'email appartient à l'un des domaines, false sinon.
+	 */
+	public static function is_email_in_domains( $email, array $domains ) {
+		if ( empty( $email ) || empty( $domains ) ) {
+			return false;
+		}
+
+		$email        = strtolower( trim( $email ) );
+		$email_domain = substr( strrchr( $email, '@' ), 1 );
+
+		if ( empty( $email_domain ) ) {
+			return false;
+		}
+
+		foreach ( $domains as $domain ) {
+			$domain = strtolower( trim( $domain ) );
+			if ( empty( $domain ) ) {
+				continue;
+			}
+
+			// Correspondance exacte ou sous-domaine (ex. team@sub.domaine.re correspond à domaine.re)
+			if ( $email_domain === $domain || ( strlen( $email_domain ) > strlen( $domain ) && substr( $email_domain, -( strlen( $domain ) + 1 ) ) === '.' . $domain ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
 }

@@ -35,11 +35,28 @@ class Woo_Export_Contacts_Engine {
 			? array_map( 'sanitize_text_field', $args['sources'] )
 			: array( 'orders', 'users' );
 		$delimiter_key    = ! empty( $args['csv_delimiter'] ) ? sanitize_text_field( $args['csv_delimiter'] ) : 'comma';
-		$columns_mode     = ! empty( $args['csv_columns'] ) ? sanitize_text_field( $args['csv_columns'] ) : 'emailit_ready';
-		$exclude_internal = ! empty( $args['exclude_internal'] ) && '1' === (string) $args['exclude_internal'];
-		$tag_prefix       = ! empty( $args['tag_prefix'] )
+		$columns_mode  = ! empty( $args['csv_columns'] ) ? sanitize_text_field( $args['csv_columns'] ) : 'emailit_ready';
+		$tag_prefix    = ! empty( $args['tag_prefix'] )
 			? sanitize_key( $args['tag_prefix'] )
 			: 'confo';
+
+		// Domaines à exclure : domaine du site courant + soyoo.re par défaut
+		$site_host            = wp_parse_url( home_url(), PHP_URL_HOST );
+		$site_domain          = $site_host ? strtolower( preg_replace( '/^www\./i', '', $site_host ) ) : '';
+		$default_auto_domains = array_filter( array_unique( array( $site_domain, 'soyoo.re' ) ) );
+
+		if ( isset( $args['excluded_domains'] ) ) {
+			$raw_excluded_domains = $args['excluded_domains'];
+		} else {
+			$saved_domains        = get_option( 'woo_export_contacts_excluded_domains', null );
+			$raw_excluded_domains = ( null !== $saved_domains ) ? $saved_domains : $default_auto_domains;
+		}
+
+		$excluded_domains = Woo_Export_Contacts_Sanitizer::parse_domains_list( $raw_excluded_domains );
+
+		// Rétrocompatibilité avec les filtres existants
+		$excluded_domains = apply_filters( 'woo_export_contacts_excluded_domains', $excluded_domains );
+		$excluded_domains = apply_filters( 'woo_export_contacts_internal_domains', $excluded_domains );
 
 		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start_date_raw ) ) {
 			$start_date_raw = gmdate( 'Y-m-01' );
@@ -83,13 +100,10 @@ class Woo_Export_Contacts_Engine {
 			self::filter_strictly_new( $contacts, $start_gmt, $start_datetime );
 		}
 
-		// 4. Exclusion des e-mails internes de test
-		if ( $exclude_internal && ! empty( $contacts ) ) {
-			$internal_domains = apply_filters(
-				'woo_export_contacts_internal_domains',
-				array( '@conforama.re', '@ridis-reunion.com', '@soyoo.re' )
-			);
-			self::filter_internal_domains( $contacts, $internal_domains );
+		// 4. Exclusion des e-mails appartenant aux domaines exclus
+		$skip_exclusion = isset( $args['exclude_internal'] ) && ( '0' === (string) $args['exclude_internal'] || false === $args['exclude_internal'] );
+		if ( ! $skip_exclusion && ! empty( $excluded_domains ) && ! empty( $contacts ) ) {
+			self::filter_excluded_domains( $contacts, $excluded_domains );
 		}
 
 		// 5. Streaming du fichier CSV vers le navigateur
@@ -452,21 +466,35 @@ class Woo_Export_Contacts_Engine {
 	}
 
 	/**
-	 * Élimine les e-mails internes de l'export.
+	 * Élimine les e-mails appartenant aux domaines exclus de l'export.
+	 *
+	 * @param array $contacts Tableau de contacts référencé.
+	 * @param array $excluded_domains Liste des domaines assainis à exclure.
+	 * @return void
 	 */
-	private static function filter_internal_domains( &$contacts, array $internal_domains ) {
+	private static function filter_excluded_domains( &$contacts, array $excluded_domains ) {
+		if ( empty( $excluded_domains ) || empty( $contacts ) ) {
+			return;
+		}
+
 		foreach ( array_keys( $contacts ) as $email ) {
-			foreach ( $internal_domains as $domain ) {
-				$domain = strtolower( trim( $domain ) );
-				if ( empty( $domain ) ) {
-					continue;
-				}
-				if ( substr( $email, -strlen( $domain ) ) === $domain ) {
-					unset( $contacts[ $email ] );
-					break;
-				}
+			if ( Woo_Export_Contacts_Sanitizer::is_email_in_domains( $email, $excluded_domains ) ) {
+				unset( $contacts[ $email ] );
 			}
 		}
+	}
+
+	/**
+	 * Méthode de rétrocompatibilité pour le filtrage des domaines internes.
+	 *
+	 * @deprecated 2.1.0 Utiliser filter_excluded_domains() à la place.
+	 * @param array $contacts Tableau de contacts référencé.
+	 * @param array $internal_domains Liste des domaines à exclure.
+	 * @return void
+	 */
+	private static function filter_internal_domains( &$contacts, array $internal_domains ) {
+		$clean_domains = Woo_Export_Contacts_Sanitizer::parse_domains_list( $internal_domains );
+		self::filter_excluded_domains( $contacts, $clean_domains );
 	}
 
 	/**

@@ -68,6 +68,12 @@ class Woo_Export_Contacts_Admin {
 			wp_die( esc_html__( 'Échec de la validation de sécurité CSRF (nonce expiré). Veuillez rafraîchir la page et réessayer.', 'woo-export-contacts' ) );
 		}
 
+		// Sauvegarde persistante de la liste des domaines exclus configurés par l'utilisateur
+		if ( isset( $_POST['excluded_domains'] ) ) {
+			$raw_excluded = sanitize_textarea_field( wp_unslash( $_POST['excluded_domains'] ) );
+			update_option( 'woo_export_contacts_excluded_domains', $raw_excluded );
+		}
+
 		// Délégation au moteur d'exportation
 		Woo_Export_Contacts_Engine::export_csv( wp_unslash( $_POST ) );
 	}
@@ -102,12 +108,30 @@ class Woo_Export_Contacts_Admin {
 		// Préfixe de tag par défaut
 		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
 		$is_confo    = false !== stripos( (string) $site_host, 'conforama' );
+		$site_domain = $site_host ? strtolower( preg_replace( '/^www\./i', '', $site_host ) ) : '';
 		$default_tag = $is_confo ? 'confo' : sanitize_key( preg_replace( '/[^a-zA-Z0-9]/', '', (string) get_bloginfo( 'name' ) ) );
 		if ( empty( $default_tag ) ) {
 			$default_tag = 'confo';
 		}
 
-		$badge_text = $is_confo ? 'Conforama.re &bull; v2.0' : esc_html( get_bloginfo( 'name' ) ) . ' &bull; v2.0';
+		// Domaines exclus par défaut : domaine du site courant + soyoo.re
+		$default_domains = array();
+		if ( ! empty( $site_domain ) ) {
+			$default_domains[] = $site_domain;
+		}
+		if ( ! in_array( 'soyoo.re', $default_domains, true ) ) {
+			$default_domains[] = 'soyoo.re';
+		}
+
+		$saved_excluded_domains = get_option( 'woo_export_contacts_excluded_domains', null );
+		if ( null !== $saved_excluded_domains && is_string( $saved_excluded_domains ) ) {
+			$excluded_domains_val = $saved_excluded_domains;
+		} else {
+			$excluded_domains_val = implode( "\n", $default_domains );
+		}
+
+		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.1.0';
+		$badge_text      = $is_confo ? 'Conforama.re &bull; v' . $version_display : esc_html( get_bloginfo( 'name' ) ) . ' &bull; v' . $version_display;
 		?>
 		<div class="wrap" style="max-width: 980px; margin-top: 25px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
 			
@@ -149,7 +173,9 @@ class Woo_Export_Contacts_Admin {
 							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( '-30 days' ) ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">30 derniers jours</button>
 							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-01' ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">Mois en cours</button>
 							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-01', strtotime( 'first day of last month' ) ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-t', strtotime( 'last month' ) ) ); ?>">Mois dernier</button>
+							<?php if ( $is_confo ) : ?>
 							<button type="button" class="button button-small confo-quick-date" style="border-color: #e2001a; color: #e2001a; font-weight: 600;" data-start="2026-09-05" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">💥 Période Soldes (Depuis le 05/09)</button>
+							<?php endif; ?>
 						</div>
 
 						<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
@@ -254,11 +280,19 @@ class Woo_Export_Contacts_Admin {
 									<label for="tag_prefix" style="display: block; font-size: 12px; font-weight: 600; color: #555555; margin-bottom: 4px;">Préfixe des Tags (ex. <?php echo esc_attr( $default_tag ); ?>_client) :</label>
 									<input type="text" id="tag_prefix" name="tag_prefix" value="<?php echo esc_attr( $default_tag ); ?>" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid #8c8f94; font-size: 13px;">
 								</div>
-								<div style="margin-top: 4px;">
-									<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: #555555;">
-										<input type="checkbox" name="exclude_internal" value="1" checked>
-										<span>Exclure les e-mails internes (@conforama.re, @ridis-reunion.com, @soyoo.re)</span>
-									</label>
+								<div>
+									<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+										<label for="excluded_domains" style="font-size: 12px; font-weight: 600; color: #555555;">
+											🚫 Domaines e-mails à exclure :
+										</label>
+										<button type="button" id="reset_excluded_domains_btn" style="background: none; border: none; padding: 0; color: #0073aa; font-size: 11px; text-decoration: underline; cursor: pointer;">
+											Rétablir par défaut
+										</button>
+									</div>
+									<textarea id="excluded_domains" name="excluded_domains" rows="3" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid #8c8f94; font-size: 12px; font-family: Consolas, Monaco, monospace; line-height: 1.4;" placeholder="<?php echo esc_attr( implode( "\n", $default_domains ) ); ?>"><?php echo esc_textarea( $excluded_domains_val ); ?></textarea>
+									<small style="color: #666666; font-size: 11px; display: block; margin-top: 2px;">
+										Un domaine par ligne (ou séparés par des virgules). Les e-mails de ces domaines (ex. <code>@<?php echo esc_html( ! empty( $site_domain ) ? $site_domain : 'domaine.re' ); ?></code>, <code>@soyoo.re</code>) ne seront pas exportés.
+									</small>
 								</div>
 							</div>
 						</div>
@@ -290,6 +324,18 @@ class Woo_Export_Contacts_Admin {
 				document.getElementById('end_date').value = this.dataset.end;
 			});
 		});
+
+		var defaultExcludedDomains = <?php echo wp_json_encode( implode( "\n", $default_domains ) ); ?>;
+		var resetDomainsBtn = document.getElementById('reset_excluded_domains_btn');
+		if (resetDomainsBtn) {
+			resetDomainsBtn.addEventListener('click', function(e) {
+				e.preventDefault();
+				var textarea = document.getElementById('excluded_domains');
+				if (textarea) {
+					textarea.value = defaultExcludedDomains;
+				}
+			});
+		}
 		</script>
 		<?php
 	}

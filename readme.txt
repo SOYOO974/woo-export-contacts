@@ -4,7 +4,7 @@ Tags: woocommerce, export, contacts, emailit, klaviyo, csv, hpos
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.0.0
+Stable tag: 2.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,6 +18,7 @@ Woo Export Contacts est une extension conçue pour exporter facilement et rapide
 * Prise en charge native de WooCommerce HPOS (High-Performance Order Storage).
 * Détection automatique des paniers abandonnés (CartFlows), abonnés MailPoet et alertes rupture de stock.
 * Normalisation automatique des prénoms/noms (Title Case) et des numéros de téléphone (+262 Réunion/Mayotte, +33 Métropole).
+* Exclusion personnalisable des domaines d'e-mails (insertion automatique du domaine du site et de soyoo.re).
 * Règle de sélection "Strictement Nouveaux Contacts" excluant les clients historiques.
 * Streaming direct du fichier CSV avec BOM UTF-8 (ouverture Excel sans caractères corrompus).
 * Mises à jour automatiques via GitHub et plugin-update-checker.
@@ -29,6 +30,12 @@ Woo Export Contacts est une extension conçue pour exporter facilement et rapide
 3. Rendez-vous dans WooCommerce > Export Contacts Emailit.
 
 == Changelog ==
+
+= 2.1.0 =
+* Remplacement de l'option d'exclusion statique par une liste éditable de domaines e-mails à exclure.
+* Insertion automatique du nom de domaine du site actuel et de soyoo.re par défaut.
+* Filtrage précis et étanche des adresses e-mails par domaine et sous-domaine.
+* Persistance en base de données et bouton rapide de rétablissement des valeurs par défaut.
 
 = 2.0.0 =
 * Version initiale complète standardisée pour SOYOO et Conforama.re.
