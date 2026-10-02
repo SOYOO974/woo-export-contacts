@@ -36,3 +36,9 @@
    - Validation stricte des e-mails (`is_email`) et dédoublonnage automatique.
    - Protection contre l'injection de formules tableur CSV (DDE Injection).
    - Augmentation temporaire du timeout (600s) et de la mémoire (1024M) pour les gros volumes.
+
+5. **Profil ManyChat WhatsApp & Dédoublonnage Téléphonique** :
+   - Mode ManyChat WhatsApp Ready (`phone, first_name, last_name, tags`) sans e-mail pour contourner le blocage d'approbation manuelle (*« Request approval »*) de ManyChat.
+   - Filtrage strict : seuls les contacts possédant un numéro valide au standard E.164 (+262 Réunion/Mayotte, +33 Métropole) sont retenus.
+   - Dédoublonnage par numéro de téléphone : en cas de multiples commandes associées à des e-mails différents avec le même numéro, la commande la plus récente est conservée.
+   - Optimisation de la facturation ManyChat en évitant l'import de contacts fantômes non contactables sur WhatsApp.

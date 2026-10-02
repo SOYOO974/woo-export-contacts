@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       Woo Export Contacts
  * Plugin URI:        https://github.com/SOYOO974/woo-export-contacts
- * Description:       Exportation CSV ultra-propre, dédoublonnée et performante des contacts marketing (Comptes, Commandes WooCommerce HPOS & Legacy, Paniers Abandonnés, Newsletter MailPoet, Alertes Waitlist). Optimisé pour Emailit, Klaviyo et Brevo.
- * Version:           2.1.0
+ * Description:       Exportation CSV ultra-propre, dédoublonnée et performante des contacts marketing (Comptes, Commandes WooCommerce HPOS & Legacy, Paniers Abandonnés, Newsletter MailPoet, Alertes Waitlist). Optimisé pour ManyChat (WhatsApp), Emailit, Klaviyo et Brevo.
+ * Version:           2.2.0
  * Author:            SOYOO
  * Author URI:        https://soyoo.re
  * License:           GPLv2 or later
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // 1. Définition des constantes globales
-define( 'WOO_EXPORT_CONTACTS_VERSION', '2.1.0' );
+define( 'WOO_EXPORT_CONTACTS_VERSION', '2.2.0' );
 define( 'WOO_EXPORT_CONTACTS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_EXPORT_CONTACTS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'WOO_EXPORT_CONTACTS_BASENAME', plugin_basename( __FILE__ ) );

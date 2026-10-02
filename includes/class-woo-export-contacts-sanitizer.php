@@ -89,12 +89,37 @@ class Woo_Export_Contacts_Sanitizer {
 			return '+33' . $matches[1];
 		}
 
+		// Cas avec indicatif +262 suivi d'un 0 résiduel (ex. +2620692... ou +262 0262...)
+		if ( preg_match( '/^\+2620([26]9[23]\d{6})$/', $clean, $matches ) ) {
+			return '+262' . $matches[1];
+		}
+
+		// Cas avec indicatif +33 suivi d'un 0 résiduel (ex. +3306... ou +33(0)6...)
+		if ( preg_match( '/^\+330([1-9]\d{8})$/', $clean, $matches ) ) {
+			return '+33' . $matches[1];
+		}
+
 		// Métropole saisi sans le 0 (336... / 337...)
 		if ( preg_match( '/^33([1-9]\d{8})$/', $clean, $matches ) ) {
 			return '+33' . $matches[1];
 		}
 
 		return $clean;
+	}
+
+	/**
+	 * Vérifie si un numéro de téléphone est valide au format international E.164.
+	 *
+	 * @param string|null $phone Numéro brut ou nettoyé.
+	 * @return bool True si le numéro respecte le standard international E.164 (+ et 8 à 15 chiffres).
+	 */
+	public static function is_valid_phone( $phone ) {
+		if ( empty( $phone ) || ! is_string( $phone ) ) {
+			return false;
+		}
+
+		$cleaned = self::clean_phone( $phone );
+		return (bool) preg_match( '/^\+[1-9]\d{7,14}$/', $cleaned );
 	}
 
 	/**

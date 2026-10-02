@@ -30,8 +30,8 @@ class Woo_Export_Contacts_Admin {
 		// Menu principal visible sous WooCommerce
 		add_submenu_page(
 			'woocommerce',
-			__( 'Export Contacts (Emailit)', 'woo-export-contacts' ),
-			__( 'Export Contacts Emailit', 'woo-export-contacts' ),
+			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
+			__( 'Export Contacts Emailit & WhatsApp', 'woo-export-contacts' ),
 			'manage_woocommerce',
 			'conforama-export-contacts',
 			array( $this, 'render_admin_page' )
@@ -40,8 +40,8 @@ class Woo_Export_Contacts_Admin {
 		// Alias sous-jacent pour compatibilité d'URL directe page=woo-export-contacts
 		add_submenu_page(
 			null,
-			__( 'Export Contacts (Emailit)', 'woo-export-contacts' ),
-			__( 'Export Contacts Emailit', 'woo-export-contacts' ),
+			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
+			__( 'Export Contacts Emailit & WhatsApp', 'woo-export-contacts' ),
 			'manage_woocommerce',
 			'woo-export-contacts',
 			array( $this, 'render_admin_page' )
@@ -140,10 +140,10 @@ class Woo_Export_Contacts_Admin {
 				<div>
 					<h1 style="font-weight: 800; font-size: 24px; color: #111111; margin: 0 0 6px 0; display: flex; align-items: center; gap: 10px;">
 						<span class="dashicons dashicons-email-alt2" style="font-size: 32px; width: 32px; height: 32px; color: #e2001a;"></span>
-						Export Contacts Marketing &bull; Spécial Emailit
+						Export Contacts Marketing &bull; Emailit &amp; ManyChat WhatsApp
 					</h1>
 					<p style="color: #666666; font-size: 13px; margin: 0;">
-						Générez un fichier CSV nettoyé, dédoublonné et prêt à importer en 1 clic dans <strong>Emailit</strong> (ou Klaviyo, Brevo).
+						Générez un fichier CSV nettoyé, dédoublonné et prêt à importer en 1 clic dans <strong>Emailit</strong> (ou Klaviyo, Brevo) et <strong>ManyChat (WhatsApp)</strong>.
 					</p>
 				</div>
 				<div style="display: flex; align-items: center; gap: 8px;">
@@ -258,13 +258,15 @@ class Woo_Export_Contacts_Admin {
 						<!-- Options de format -->
 						<div>
 							<label style="display: block; font-weight: 700; font-size: 14px; margin-bottom: 12px; color: #111111;">
-								⚙️ Configuration de l'export Emailit
+								⚙️ Configuration de l'export &amp; Destination
 							</label>
 							<div style="display: flex; flex-direction: column; gap: 12px;">
 								<div>
-									<label for="csv_columns" style="display: block; font-size: 12px; font-weight: 600; color: #555555; margin-bottom: 4px;">Structure des colonnes :</label>
+									<label for="csv_columns" style="display: block; font-size: 12px; font-weight: 600; color: #555555; margin-bottom: 4px;">Destination &amp; Structure des colonnes :</label>
 									<select id="csv_columns" name="csv_columns" style="width: 100%; padding: 6px 10px; border-radius: 4px;">
 										<option value="emailit_ready" selected>🚀 Format Emailit Ready (Email, First Name, Last Name, Phone, Tags)</option>
+										<option value="manychat_whatsapp">💬 Format ManyChat WhatsApp (Phone, First Name, Last Name, Tags — Sans e-mail, 100% Mobile)</option>
+										<option value="manychat_whatsapp_email">💬 Format ManyChat WhatsApp + Email (Phone, First Name, Last Name, Email, Tags)</option>
 										<option value="full">📊 Format Complet / Audit (Prénom, Nom, Email, Téléphone, Source, Tag, Date)</option>
 										<option value="simple">⚡ Format Simplifié (Prénom, Nom, Email)</option>
 									</select>
@@ -272,7 +274,7 @@ class Woo_Export_Contacts_Admin {
 								<div>
 									<label for="csv_delimiter" style="display: block; font-size: 12px; font-weight: 600; color: #555555; margin-bottom: 4px;">Séparateur CSV :</label>
 									<select id="csv_delimiter" name="csv_delimiter" style="width: 100%; padding: 6px 10px; border-radius: 4px;">
-										<option value="comma" selected>Virgule (,) — Standard Emailit, Klaviyo, Brevo</option>
+										<option value="comma" selected>Virgule (,) — Standard ManyChat, Emailit, Klaviyo, Brevo</option>
 										<option value="semicolon">Point-virgule (;) — Standard Excel France</option>
 									</select>
 								</div>
@@ -299,18 +301,28 @@ class Woo_Export_Contacts_Admin {
 
 					</div>
 
-					<!-- ENCART CONSEIL EMAILIT -->
-					<div style="background: #fff8e5; border-left: 4px solid #ffcc00; padding: 12px 16px; margin-bottom: 25px; border-radius: 0 4px 4px 0;">
-						<p style="margin: 0; font-size: 13px; color: #444444; line-height: 1.5;">
-							💡 <strong>Spécifique Emailit :</strong> Le mode <em>Emailit Ready</em> inclut la colonne <code>Tags</code> (ex. <code><?php echo esc_attr( $default_tag ); ?>_client</code>, <code><?php echo esc_attr( $default_tag ); ?>_panier_abandonne</code>, <code><?php echo esc_attr( $default_tag ); ?>_newsletter</code>). Lors de l'import dans Emailit, vous pourrez mapper directement la colonne <code>Tags</code> pour segmenter automatiquement vos listes sans aucune manipulation manuelle.
-						</p>
+					<!-- ENCART CONSEIL DYNAMIQUE -->
+					<div id="export-advice-box" style="background: #fff8e5; border-left: 4px solid #ffcc00; padding: 14px 18px; margin-bottom: 25px; border-radius: 0 4px 4px 0; transition: all 0.25s ease;">
+						<div id="export-advice-emailit">
+							<p style="margin: 0; font-size: 13px; color: #444444; line-height: 1.5;">
+								💡 <strong>Spécifique Emailit :</strong> Le mode <em>Emailit Ready</em> inclut la colonne <code>Tags</code> (ex. <code><?php echo esc_attr( $default_tag ); ?>_client</code>, <code><?php echo esc_attr( $default_tag ); ?>_panier_abandonne</code>, <code><?php echo esc_attr( $default_tag ); ?>_newsletter</code>). Lors de l'import dans Emailit, vous pourrez mapper directement la colonne <code>Tags</code> pour segmenter automatiquement vos listes sans aucune manipulation manuelle.
+							</p>
+						</div>
+						<div id="export-advice-manychat" style="display: none;">
+							<p style="margin: 0; font-size: 13px; color: #065f46; line-height: 1.6;">
+								💬 <strong>Spécifique ManyChat WhatsApp :</strong><br>
+								&bull; <strong>100% Numéros Mobiles E.164 :</strong> Seuls les contacts ayant un numéro de téléphone valide (+262 / +33) sont exportés et dédoublonnés.<br>
+								&bull; <strong>Sans e-mail (Recommandé) :</strong> Contourne immédiatement le blocage <em>« Request approval »</em> de ManyChat pour le canal Email et évite de gonfler inutilement votre palier de facturation avec des contacts sans numéro WhatsApp.<br>
+								&bull; <strong>Mapping ManyChat :</strong> Lors de l'import CSV dans ManyChat, mappez la colonne <code>phone</code> sur le champ système <strong>WhatsApp ID</strong>.
+							</p>
+						</div>
 					</div>
 
 					<!-- BOUTON D'ACTION -->
 					<div>
-						<button type="submit" class="button button-primary button-hero" style="background-color: #e2001a; border-color: #b50015; font-weight: 700; padding: 6px 28px; display: inline-flex; align-items: center; gap: 8px; text-shadow: none; box-shadow: 0 2px 6px rgba(226,0,26,0.3);">
+						<button type="submit" id="export-submit-btn" class="button button-primary button-hero" style="background-color: #e2001a; border-color: #b50015; font-weight: 700; padding: 6px 28px; display: inline-flex; align-items: center; gap: 8px; text-shadow: none; box-shadow: 0 2px 6px rgba(226,0,26,0.3);">
 							<span class="dashicons dashicons-download" style="font-size: 20px; line-height: 28px;"></span>
-							Générer et Télécharger le CSV Emailit
+							<span id="export-submit-label">Générer et Télécharger le CSV Emailit</span>
 						</button>
 					</div>
 				</form>
@@ -335,6 +347,51 @@ class Woo_Export_Contacts_Admin {
 					textarea.value = defaultExcludedDomains;
 				}
 			});
+		}
+
+		var columnsSelect  = document.getElementById('csv_columns');
+		var adviceBox      = document.getElementById('export-advice-box');
+		var adviceEmailit  = document.getElementById('export-advice-emailit');
+		var adviceManychat = document.getElementById('export-advice-manychat');
+		var submitBtn      = document.getElementById('export-submit-btn');
+		var submitLabel    = document.getElementById('export-submit-label');
+
+		function updateExportFormatUI() {
+			if (!columnsSelect) return;
+			var val = columnsSelect.value;
+			var isManychat = (val === 'manychat_whatsapp' || val === 'manychat_whatsapp_email');
+			if (isManychat) {
+				if (adviceBox) {
+					adviceBox.style.background = '#f0fdf4';
+					adviceBox.style.borderLeftColor = '#25d366';
+				}
+				if (adviceEmailit) adviceEmailit.style.display = 'none';
+				if (adviceManychat) adviceManychat.style.display = 'block';
+				if (submitLabel) submitLabel.textContent = 'Générer et Télécharger le CSV ManyChat (WhatsApp)';
+				if (submitBtn) {
+					submitBtn.style.backgroundColor = '#075e54';
+					submitBtn.style.borderColor = '#05463e';
+					submitBtn.style.boxShadow = '0 2px 6px rgba(7,94,84,0.3)';
+				}
+			} else {
+				if (adviceBox) {
+					adviceBox.style.background = '#fff8e5';
+					adviceBox.style.borderLeftColor = '#ffcc00';
+				}
+				if (adviceEmailit) adviceEmailit.style.display = 'block';
+				if (adviceManychat) adviceManychat.style.display = 'none';
+				if (submitLabel) submitLabel.textContent = 'Générer et Télécharger le CSV Emailit';
+				if (submitBtn) {
+					submitBtn.style.backgroundColor = '#e2001a';
+					submitBtn.style.borderColor = '#b50015';
+					submitBtn.style.boxShadow = '0 2px 6px rgba(226,0,26,0.3)';
+				}
+			}
+		}
+
+		if (columnsSelect) {
+			columnsSelect.addEventListener('change', updateExportFormatUI);
+			updateExportFormatUI();
 		}
 		</script>
 		<?php

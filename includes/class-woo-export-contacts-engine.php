@@ -510,12 +510,15 @@ class Woo_Export_Contacts_Engine {
 		}
 		@ini_set( 'zlib.output_compression', 'Off' );
 
-		$filter_tag = $strict_new ? 'nouveaux-strict' : 'tous-actifs';
-		$site_host  = wp_parse_url( home_url(), PHP_URL_HOST );
-		$site_slug  = $site_host ? sanitize_file_name( preg_replace( '/^www\./', '', $site_host ) ) : 'contacts';
+		$filter_tag  = $strict_new ? 'nouveaux-strict' : 'tous-actifs';
+		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
+		$site_slug   = $site_host ? sanitize_file_name( preg_replace( '/^www\./', '', $site_host ) ) : 'contacts';
+		$is_manychat = in_array( $columns_mode, array( 'manychat_whatsapp', 'manychat_whatsapp_email' ), true );
 
-		$filename = sprintf(
-			'contacts-%s-%s-au-%s-%s.csv',
+		$file_prefix = $is_manychat ? 'contacts-manychat-whatsapp' : 'contacts';
+		$filename    = sprintf(
+			'%s-%s-%s-au-%s-%s.csv',
+			$file_prefix,
 			$site_slug,
 			sanitize_file_name( $start_date_raw ),
 			sanitize_file_name( $end_date_raw ),
@@ -533,33 +536,69 @@ class Woo_Export_Contacts_Engine {
 		// Émission du BOM UTF-8 (assure l'affichage direct des accents sans corruption dans Microsoft Excel)
 		fputs( $output, "\xEF\xBB\xBF" );
 
-		// Ligne d'en-tête CSV selon le mode choisi
+		// 1. Pour les modes ManyChat WhatsApp : filtrage strict des téléphones valides et dédoublonnage par numéro
+		if ( $is_manychat ) {
+			$deduped_by_phone = array();
+			foreach ( $contacts as $c ) {
+				$raw_phone = isset( $c['phone'] ) ? trim( $c['phone'] ) : '';
+				if ( empty( $raw_phone ) || ! Woo_Export_Contacts_Sanitizer::is_valid_phone( $raw_phone ) ) {
+					continue;
+				}
+				$clean_phone = Woo_Export_Contacts_Sanitizer::clean_phone( $raw_phone );
+				if ( isset( $deduped_by_phone[ $clean_phone ] ) ) {
+					// Conserver la donnée la plus récente si disponible
+					$existing_date = strtotime( $deduped_by_phone[ $clean_phone ]['date'] ?? '1970-01-01' );
+					$current_date  = strtotime( $c['date'] ?? '1970-01-01' );
+					if ( $current_date > $existing_date ) {
+						$deduped_by_phone[ $clean_phone ] = $c;
+					}
+				} else {
+					$deduped_by_phone[ $clean_phone ] = $c;
+				}
+			}
+			$contacts = $deduped_by_phone;
+		}
+
+		// 2. Ligne d'en-tête CSV selon le mode choisi
 		if ( 'emailit_ready' === $columns_mode ) {
 			// Format standardisé 100% prêt à mapper pour Emailit, Klaviyo ou Brevo
 			fputcsv( $output, array( 'email', 'first_name', 'last_name', 'phone', 'tags' ), $delimiter );
+		} elseif ( 'manychat_whatsapp' === $columns_mode ) {
+			// Format ManyChat WhatsApp sans e-mail (Phone, First Name, Last Name, Tags)
+			fputcsv( $output, array( 'phone', 'first_name', 'last_name', 'tags' ), $delimiter );
+		} elseif ( 'manychat_whatsapp_email' === $columns_mode ) {
+			// Format ManyChat WhatsApp avec e-mail (Phone, First Name, Last Name, Email, Tags)
+			fputcsv( $output, array( 'phone', 'first_name', 'last_name', 'email', 'tags' ), $delimiter );
 		} elseif ( 'simple' === $columns_mode ) {
 			fputcsv( $output, array( 'Prénom', 'Nom', 'Email' ), $delimiter );
 		} else {
 			fputcsv( $output, array( 'Prénom', 'Nom', 'Email', 'Téléphone', 'Source', 'Tag Emailit', 'Date d\'activité' ), $delimiter );
 		}
 
-		// Écriture ligne par ligne avec protection anti-injection CSV
+		// 3. Écriture ligne par ligne avec protection anti-injection CSV
 		foreach ( $contacts as $c ) {
 			$email = isset( $c['email'] ) ? sanitize_email( strtolower( trim( $c['email'] ) ) ) : '';
-			if ( empty( $email ) || ! is_email( $email ) ) {
-				continue;
+			$phone = isset( $c['phone'] ) ? trim( $c['phone'] ) : '';
+
+			if ( ! $is_manychat ) {
+				if ( empty( $email ) || ! is_email( $email ) ) {
+					continue;
+				}
+			} else {
+				if ( empty( $phone ) || ! Woo_Export_Contacts_Sanitizer::is_valid_phone( $phone ) ) {
+					continue;
+				}
 			}
 
 			$first_name     = isset( $c['first_name'] ) ? trim( $c['first_name'] ) : '';
 			$last_name      = isset( $c['last_name'] ) ? trim( $c['last_name'] ) : '';
-			$phone          = isset( $c['phone'] ) ? trim( $c['phone'] ) : '';
 			$formatted_date = ! empty( $c['date'] ) ? gmdate( 'Y-m-d H:i', strtotime( $c['date'] ) ) : '';
 
 			// Escaping anti-injection DDE Excel
 			$esc_first_name = Woo_Export_Contacts_Sanitizer::escape_csv_value( $first_name, 'first_name' );
 			$esc_last_name  = Woo_Export_Contacts_Sanitizer::escape_csv_value( $last_name, 'last_name' );
-			$esc_phone      = Woo_Export_Contacts_Sanitizer::escape_csv_value( $phone, 'phone' );
-			$esc_email      = $email; // Adresse e-mail déjà validée par is_email()
+			$esc_phone      = Woo_Export_Contacts_Sanitizer::escape_csv_value( Woo_Export_Contacts_Sanitizer::clean_phone( $phone ), 'phone' );
+			$esc_email      = $email; // Adresse e-mail déjà validée
 			$esc_tag        = Woo_Export_Contacts_Sanitizer::escape_csv_value( $c['tag'] ?? '', 'tag' );
 			$esc_source     = Woo_Export_Contacts_Sanitizer::escape_csv_value( $c['source'] ?? '', 'source' );
 
@@ -569,6 +608,21 @@ class Woo_Export_Contacts_Engine {
 					$esc_first_name,
 					$esc_last_name,
 					$esc_phone,
+					$esc_tag,
+				), $delimiter );
+			} elseif ( 'manychat_whatsapp' === $columns_mode ) {
+				fputcsv( $output, array(
+					$esc_phone,
+					$esc_first_name,
+					$esc_last_name,
+					$esc_tag,
+				), $delimiter );
+			} elseif ( 'manychat_whatsapp_email' === $columns_mode ) {
+				fputcsv( $output, array(
+					$esc_phone,
+					$esc_first_name,
+					$esc_last_name,
+					$esc_email,
 					$esc_tag,
 				), $delimiter );
 			} elseif ( 'simple' === $columns_mode ) {
