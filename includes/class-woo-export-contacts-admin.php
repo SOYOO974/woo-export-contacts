@@ -21,6 +21,93 @@ class Woo_Export_Contacts_Admin {
 		add_action( 'admin_menu', array( $this, 'register_admin_menus' ), 99 );
 		add_action( 'admin_post_conforama_export_contacts_csv', array( $this, 'handle_export_submission' ) );
 		add_action( 'admin_post_woo_export_contacts_csv', array( $this, 'handle_export_submission' ) );
+		add_action( 'admin_init', array( $this, 'maybe_suppress_admin_notices_early' ) );
+	}
+
+	/**
+	 * Détection précoce sur admin_init pour désactiver les notifications avant leur exécution.
+	 */
+	public function maybe_suppress_admin_notices_early() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$page = isset( $_GET['page'] ) ? sanitize_text_field( wp_unslash( $_GET['page'] ) ) : '';
+		if ( in_array( $page, array( 'conforama-export-contacts', 'woo-export-contacts' ), true ) ) {
+			$this->prepare_admin_screen();
+		}
+	}
+
+	/**
+	 * Prépare l'écran d'administration et neutralise toutes les notifications admin tierces.
+	 */
+	public function prepare_admin_screen() {
+		$this->clear_all_admin_notices();
+
+		// Filet de sécurité au cas où des extensions tierces ajoutent des hooks plus tard (ex: sur current_screen ou admin_head)
+		add_action( 'in_admin_header', array( $this, 'clear_all_admin_notices' ), PHP_INT_MAX );
+		add_action( 'admin_head', array( $this, 'clear_all_admin_notices' ), PHP_INT_MAX );
+		add_action( 'admin_print_styles', array( $this, 'inject_clean_screen_styles' ) );
+	}
+
+	/**
+	 * Supprime tous les hooks enregistrés sur les actions de notifications WordPress.
+	 */
+	public function clear_all_admin_notices() {
+		remove_all_actions( 'admin_notices' );
+		remove_all_actions( 'all_admin_notices' );
+		remove_all_actions( 'user_admin_notices' );
+		remove_all_actions( 'network_admin_notices' );
+	}
+
+	/**
+	 * Injecte les styles CSS d'isolation pour masquer tout résidu de notification.
+	 */
+	public function inject_clean_screen_styles() {
+		?>
+		<style type="text/css">
+			.woocommerce_page_conforama-export-contacts .notice,
+			.woocommerce_page_conforama-export-contacts .notice-error,
+			.woocommerce_page_conforama-export-contacts .notice-warning,
+			.woocommerce_page_conforama-export-contacts .notice-success,
+			.woocommerce_page_conforama-export-contacts .notice-info,
+			.woocommerce_page_conforama-export-contacts .updated,
+			.woocommerce_page_conforama-export-contacts .error,
+			.woocommerce_page_conforama-export-contacts .is-dismissible,
+			.woocommerce_page_conforama-export-contacts .woocommerce-message,
+			.woocommerce_page_conforama-export-contacts .woocommerce-error,
+			.woocommerce_page_conforama-export-contacts .update-nag,
+			.woocommerce_page_conforama-export-contacts #wpbody-content > .notice,
+			.woocommerce_page_conforama-export-contacts #wpbody-content > div.updated,
+			.woocommerce_page_conforama-export-contacts #wpbody-content > div.error,
+			.woocommerce_page_conforama-export-contacts .woocommerce-layout__header,
+			.woocommerce_page_conforama-export-contacts .woocommerce-layout__notice-list,
+			.admin_page_woo-export-contacts .notice,
+			.admin_page_woo-export-contacts .notice-error,
+			.admin_page_woo-export-contacts .notice-warning,
+			.admin_page_woo-export-contacts .notice-success,
+			.admin_page_woo-export-contacts .notice-info,
+			.admin_page_woo-export-contacts .updated,
+			.admin_page_woo-export-contacts .error,
+			.admin_page_woo-export-contacts .is-dismissible,
+			.admin_page_woo-export-contacts .woocommerce-message,
+			.admin_page_woo-export-contacts .woocommerce-error,
+			.admin_page_woo-export-contacts .update-nag,
+			.admin_page_woo-export-contacts #wpbody-content > .notice,
+			.admin_page_woo-export-contacts #wpbody-content > div.updated,
+			.admin_page_woo-export-contacts #wpbody-content > div.error,
+			.admin_page_woo-export-contacts .woocommerce-layout__header,
+			.admin_page_woo-export-contacts .woocommerce-layout__notice-list,
+			.woo-export-contacts-wrap .notice,
+			.woo-export-contacts-wrap .updated,
+			.woo-export-contacts-wrap .error,
+			.woo-export-contacts-wrap .woocommerce-message,
+			.woo-export-contacts-wrap .woocommerce-error,
+			.woo-export-contacts-wrap .update-nag,
+			.woo-export-contacts-wrap ~ .notice,
+			.woo-export-contacts-wrap ~ .updated,
+			.woo-export-contacts-wrap ~ .error {
+				display: none !important;
+			}
+		</style>
+		<?php
 	}
 
 	/**
@@ -28,7 +115,7 @@ class Woo_Export_Contacts_Admin {
 	 */
 	public function register_admin_menus() {
 		// Menu principal visible sous WooCommerce
-		add_submenu_page(
+		$main_page = add_submenu_page(
 			'woocommerce',
 			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
 			__( 'Export Contacts Emailit & WhatsApp', 'woo-export-contacts' ),
@@ -38,7 +125,7 @@ class Woo_Export_Contacts_Admin {
 		);
 
 		// Alias sous-jacent pour compatibilité d'URL directe page=woo-export-contacts
-		add_submenu_page(
+		$alias_page = add_submenu_page(
 			null,
 			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
 			__( 'Export Contacts Emailit & WhatsApp', 'woo-export-contacts' ),
@@ -46,6 +133,13 @@ class Woo_Export_Contacts_Admin {
 			'woo-export-contacts',
 			array( $this, 'render_admin_page' )
 		);
+
+		if ( $main_page ) {
+			add_action( 'load-' . $main_page, array( $this, 'prepare_admin_screen' ) );
+		}
+		if ( $alias_page ) {
+			add_action( 'load-' . $alias_page, array( $this, 'prepare_admin_screen' ) );
+		}
 	}
 
 	/**
@@ -130,11 +224,28 @@ class Woo_Export_Contacts_Admin {
 			$excluded_domains_val = implode( "\n", $default_domains );
 		}
 
-		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.1.0';
+		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.2.1';
 		$badge_text      = $is_confo ? 'Conforama.re &bull; v' . $version_display : esc_html( get_bloginfo( 'name' ) ) . ' &bull; v' . $version_display;
 		?>
-		<div class="wrap" style="max-width: 980px; margin-top: 25px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
+		<div class="wrap woo-export-contacts-wrap" style="max-width: 980px; margin-top: 25px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
 			
+			<style type="text/css">
+				.woo-export-contacts-wrap .notice,
+				.woo-export-contacts-wrap .updated,
+				.woo-export-contacts-wrap .error,
+				.woo-export-contacts-wrap .is-dismissible,
+				.woo-export-contacts-wrap .woocommerce-message,
+				.woo-export-contacts-wrap .woocommerce-error,
+				.woo-export-contacts-wrap .update-nag,
+				#wpbody-content > .notice,
+				#wpbody-content > .updated,
+				#wpbody-content > .error,
+				#wpbody-content > .woocommerce-message,
+				#wpbody-content > .update-nag {
+					display: none !important;
+				}
+			</style>
+
 			<!-- EN-TETE CONFORAMA / SOYOO -->
 			<div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #e2001a; padding-bottom: 16px; margin-bottom: 25px;">
 				<div>
@@ -155,6 +266,7 @@ class Woo_Export_Contacts_Admin {
 					</div>
 				</div>
 			</div>
+			<hr class="wp-header-end" style="display: none !important;">
 
 			<div style="background: #ffffff; border: 1px solid #dcdcde; border-radius: 8px; padding: 28px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
 				<form method="POST" action="<?php echo esc_url( $action_url ); ?>" id="conforama-export-form">
@@ -393,6 +505,16 @@ class Woo_Export_Contacts_Admin {
 			columnsSelect.addEventListener('change', updateExportFormatUI);
 			updateExportFormatUI();
 		}
+
+		// Nettoyage immédiat de tout reliquat de notifications admin dans le DOM
+		function purgeNoticeElements() {
+			document.querySelectorAll('.notice, .updated, .error, .woocommerce-message, .woocommerce-error, .update-nag').forEach(function(el) {
+				el.remove();
+			});
+		}
+		purgeNoticeElements();
+		window.addEventListener('DOMContentLoaded', purgeNoticeElements);
+		window.addEventListener('load', purgeNoticeElements);
 		</script>
 		<?php
 	}
