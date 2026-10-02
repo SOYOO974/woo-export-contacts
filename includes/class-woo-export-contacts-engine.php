@@ -27,10 +27,10 @@ class Woo_Export_Contacts_Engine {
 
 		global $wpdb;
 
-		// 1. Validation & Assainissement des paramètres
+		$is_all_time      = ( ! empty( $args['export_all_time'] ) && '1' === (string) $args['export_all_time'] ) || ( ! empty( $args['start_date'] ) && $args['start_date'] <= '2015-01-01' );
 		$start_date_raw   = ! empty( $args['start_date'] ) ? sanitize_text_field( $args['start_date'] ) : '';
 		$end_date_raw     = ! empty( $args['end_date'] ) ? sanitize_text_field( $args['end_date'] ) : '';
-		$strict_new       = ! empty( $args['strict_new'] ) && '1' === (string) $args['strict_new'];
+		$strict_new       = ! $is_all_time && ! empty( $args['strict_new'] ) && '1' === (string) $args['strict_new'];
 		$raw_sources      = ! empty( $args['sources'] ) && is_array( $args['sources'] )
 			? array_map( 'sanitize_text_field', $args['sources'] )
 			: array( 'orders', 'users' );
@@ -58,7 +58,9 @@ class Woo_Export_Contacts_Engine {
 		$excluded_domains = apply_filters( 'woo_export_contacts_excluded_domains', $excluded_domains );
 		$excluded_domains = apply_filters( 'woo_export_contacts_internal_domains', $excluded_domains );
 
-		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start_date_raw ) ) {
+		if ( $is_all_time ) {
+			$start_date_raw = '2000-01-01';
+		} elseif ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start_date_raw ) ) {
 			$start_date_raw = gmdate( 'Y-m-01' );
 		}
 		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $end_date_raw ) ) {
@@ -107,7 +109,7 @@ class Woo_Export_Contacts_Engine {
 		}
 
 		// 5. Streaming du fichier CSV vers le navigateur
-		self::stream_csv( $contacts, $columns_mode, $delimiter, $start_date_raw, $end_date_raw, $strict_new );
+		self::stream_csv( $contacts, $columns_mode, $delimiter, $start_date_raw, $end_date_raw, $strict_new, $is_all_time );
 	}
 
 	/**
@@ -500,7 +502,7 @@ class Woo_Export_Contacts_Engine {
 	/**
 	 * Streaming direct du CSV vers la sortie HTTP.
 	 */
-	private static function stream_csv( $contacts, $columns_mode, $delimiter, $start_date_raw, $end_date_raw, $strict_new ) {
+	private static function stream_csv( $contacts, $columns_mode, $delimiter, $start_date_raw, $end_date_raw, $strict_new, $is_all_time = false ) {
 		while ( ob_get_level() > 0 ) {
 			@ob_end_clean();
 		}
@@ -516,14 +518,24 @@ class Woo_Export_Contacts_Engine {
 		$is_manychat = in_array( $columns_mode, array( 'manychat_whatsapp', 'manychat_whatsapp_email' ), true );
 
 		$file_prefix = $is_manychat ? 'contacts-manychat-whatsapp' : 'contacts';
-		$filename    = sprintf(
-			'%s-%s-%s-au-%s-%s.csv',
-			$file_prefix,
-			$site_slug,
-			sanitize_file_name( $start_date_raw ),
-			sanitize_file_name( $end_date_raw ),
-			$filter_tag
-		);
+		if ( $is_all_time ) {
+			$filename = sprintf(
+				'%s-%s-tout-historique-au-%s-%s.csv',
+				$file_prefix,
+				$site_slug,
+				sanitize_file_name( $end_date_raw ),
+				$filter_tag
+			);
+		} else {
+			$filename = sprintf(
+				'%s-%s-%s-au-%s-%s.csv',
+				$file_prefix,
+				$site_slug,
+				sanitize_file_name( $start_date_raw ),
+				sanitize_file_name( $end_date_raw ),
+				$filter_tag
+			);
+		}
 
 		header( 'Content-Type: text/csv; charset=UTF-8' );
 		header( 'Content-Disposition: attachment; filename="' . $filename . '"' );

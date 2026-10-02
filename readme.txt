@@ -4,7 +4,7 @@ Tags: woocommerce, export, contacts, emailit, klaviyo, csv, hpos
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.2.1
+Stable tag: 2.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -29,9 +29,15 @@ Woo Export Contacts est une extension conçue pour exporter facilement et rapide
 
 1. Téléversez le dossier du plugin dans le répertoire `/wp-content/plugins/`.
 2. Activez le plugin via le menu 'Extensions' dans WordPress.
-3. Rendez-vous dans WooCommerce > Export Contacts Emailit & WhatsApp.
+3. Rendez-vous dans WooCommerce > Export Contacts.
 
 == Changelog ==
+
+= 2.3.0 =
+* Option "Tout l'historique" : Raccourci rapide et case à cocher permettant d'exporter l'intégralité des contacts depuis l'origine de création du site (détection automatique de la date la plus ancienne en base).
+* Unification du menu & neutralisation anti-doublon : Détection et élimination proactive de l'ancien extrait de code legacy (v2.1.0) sur Conforama.re pour garantir un seul formulaire et un menu unique "Export Contacts" sous WooCommerce.
+* Verrouillage du rendu d'écran : Garantie d'affichage unique même en cas de tentative de double exécution par des hooks tiers.
+* Optimisation du streaming CSV et nom de fichier spécifique pour les exports d'historique complet (`contacts-...-tout-historique-au-...csv`).
 
 = 2.2.1 =
 * Neutralisation intégrale de toutes les notifications d'administration WordPress parasites (WooCommerce, WP Rocket, thèmes, TGMPA) sur la page de réglages de l'extension.

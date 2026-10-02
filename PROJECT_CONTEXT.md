@@ -42,3 +42,8 @@
    - Filtrage strict : seuls les contacts possédant un numéro valide au standard E.164 (+262 Réunion/Mayotte, +33 Métropole) sont retenus.
    - Dédoublonnage par numéro de téléphone : en cas de multiples commandes associées à des e-mails différents avec le même numéro, la commande la plus récente est conservée.
    - Optimisation de la facturation ManyChat en évitant l'import de contacts fantômes non contactables sur WhatsApp.
+
+6. **Option "Tout l'Historique" & Neutralisation Anti-Doublon** :
+   - Raccourci rapide et option permettant d'extraire la totalité des contacts depuis la date d'origine du site (détectée automatiquement en base via `MIN(user_registered)` et `MIN(date_created_gmt)`).
+   - Neutralisation automatique de l'ancien snippet legacy sur Conforama.re (`conforama_export_contacts_register_menu` et hooks associés) pour éliminer les doublons de menu et de formulaire sur l'interface.
+

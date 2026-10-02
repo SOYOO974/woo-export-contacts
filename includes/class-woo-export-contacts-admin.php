@@ -18,10 +18,24 @@ class Woo_Export_Contacts_Admin {
 	 * Initialise les hooks d'administration.
 	 */
 	public function init() {
-		add_action( 'admin_menu', array( $this, 'register_admin_menus' ), 99 );
-		add_action( 'admin_post_conforama_export_contacts_csv', array( $this, 'handle_export_submission' ) );
-		add_action( 'admin_post_woo_export_contacts_csv', array( $this, 'handle_export_submission' ) );
+		// 1. Neutralisation préventive de l'ancien extrait legacy s'il est actif sur le site
+		add_action( 'admin_menu', array( $this, 'unregister_legacy_duplicate' ), 1 );
+		add_action( 'admin_menu', array( $this, 'register_admin_menus' ), 999 );
+		add_action( 'admin_post_conforama_export_contacts_csv', array( $this, 'handle_export_submission' ), 1 );
+		add_action( 'admin_post_woo_export_contacts_csv', array( $this, 'handle_export_submission' ), 1 );
 		add_action( 'admin_init', array( $this, 'maybe_suppress_admin_notices_early' ) );
+	}
+
+	/**
+	 * Neutralise l'enregistrement de l'ancien extrait de code legacy pour éviter les formulaires en doublon.
+	 */
+	public function unregister_legacy_duplicate() {
+		if ( function_exists( 'conforama_export_contacts_register_menu' ) ) {
+			remove_action( 'admin_menu', 'conforama_export_contacts_register_menu', 99 );
+		}
+		if ( function_exists( 'conforama_export_contacts_process_csv' ) ) {
+			remove_action( 'admin_post_conforama_export_contacts_csv', 'conforama_export_contacts_process_csv' );
+		}
 	}
 
 	/**
@@ -114,11 +128,20 @@ class Woo_Export_Contacts_Admin {
 	 * Enregistre les pages de menu dans l'administration WooCommerce.
 	 */
 	public function register_admin_menus() {
-		// Menu principal visible sous WooCommerce
+		// 1. Nettoyage de tout sous-menu orphelin ou legacy déjà enregistré
+		remove_submenu_page( 'woocommerce', 'conforama-export-contacts' );
+		remove_submenu_page( 'woocommerce', 'woo-export-contacts' );
+
+		// 2. Désactivation du rendu de la fonction legacy si elle a été attachée au hook d'écran
+		if ( function_exists( 'conforama_export_contacts_render_admin_page' ) ) {
+			remove_action( 'woocommerce_page_conforama-export-contacts', 'conforama_export_contacts_render_admin_page' );
+		}
+
+		// 3. Menu principal visible sous WooCommerce (intitulé court et clair)
 		$main_page = add_submenu_page(
 			'woocommerce',
 			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
-			__( 'Export Contacts Emailit & WhatsApp', 'woo-export-contacts' ),
+			__( 'Export Contacts', 'woo-export-contacts' ),
 			'manage_woocommerce',
 			'conforama-export-contacts',
 			array( $this, 'render_admin_page' )
@@ -128,7 +151,7 @@ class Woo_Export_Contacts_Admin {
 		$alias_page = add_submenu_page(
 			null,
 			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
-			__( 'Export Contacts Emailit & WhatsApp', 'woo-export-contacts' ),
+			__( 'Export Contacts', 'woo-export-contacts' ),
 			'manage_woocommerce',
 			'woo-export-contacts',
 			array( $this, 'render_admin_page' )
@@ -180,6 +203,13 @@ class Woo_Export_Contacts_Admin {
 			wp_die( esc_html__( 'Vous n\'avez pas les permissions nécessaires pour accéder à cette page.', 'woo-export-contacts' ) );
 		}
 
+		// Verrouillage anti-doublon : garantit un rendu unique même si un hook tiers se ré-exécute
+		static $rendered = false;
+		if ( $rendered ) {
+			return;
+		}
+		$rendered = true;
+
 		global $wpdb;
 
 		// Détection des tables et fonctionnalités tierces
@@ -198,6 +228,24 @@ class Woo_Export_Contacts_Admin {
 		$default_start_date = gmdate( 'Y-m-01' ); // 1er jour du mois en cours
 		$default_end_date   = gmdate( 'Y-m-d' );    // Aujourd'hui
 		$action_url         = admin_url( 'admin-post.php' );
+
+		// Calcul de la date d'origine du site (première commande ou premier utilisateur enregistré)
+		$earliest_date   = '2015-01-01';
+		$first_user_date = $wpdb->get_var( "SELECT MIN(user_registered) FROM {$wpdb->users} WHERE user_registered != '0000-00-00 00:00:00'" );
+		if ( ! empty( $first_user_date ) ) {
+			$earliest_date = gmdate( 'Y-m-d', strtotime( $first_user_date ) );
+		}
+		if ( $hpos_enabled ) {
+			$first_order_date = $wpdb->get_var( "SELECT MIN(date_created_gmt) FROM {$wpdb->prefix}wc_orders WHERE date_created_gmt IS NOT NULL" );
+		} else {
+			$first_order_date = $wpdb->get_var( "SELECT MIN(post_date) FROM {$wpdb->posts} WHERE post_type IN ('shop_order', 'shop_order_placehold') AND post_date != '0000-00-00 00:00:00'" );
+		}
+		if ( ! empty( $first_order_date ) ) {
+			$first_order_ymd = gmdate( 'Y-m-d', strtotime( $first_order_date ) );
+			if ( $first_order_ymd < $earliest_date && $first_order_ymd > '2000-01-01' ) {
+				$earliest_date = $first_order_ymd;
+			}
+		}
 
 		// Préfixe de tag par défaut
 		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
@@ -288,6 +336,9 @@ class Woo_Export_Contacts_Admin {
 							<?php if ( $is_confo ) : ?>
 							<button type="button" class="button button-small confo-quick-date" style="border-color: #e2001a; color: #e2001a; font-weight: 600;" data-start="2026-09-05" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">💥 Période Soldes (Depuis le 05/09)</button>
 							<?php endif; ?>
+							<button type="button" class="button button-small confo-quick-date confo-all-time-btn" data-start="<?php echo esc_attr( $earliest_date ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>" style="border-color: #2563eb; color: #1d4ed8; font-weight: 700; background: #eff6ff;">
+								♾️ Tout l'historique (Depuis le début : <?php echo esc_html( gmdate( 'd/m/Y', strtotime( $earliest_date ) ) ); ?>)
+							</button>
 						</div>
 
 						<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
@@ -299,6 +350,13 @@ class Woo_Export_Contacts_Admin {
 								<span style="font-size: 13px; font-weight: 600; color: #333333; display: block; margin-bottom: 4px;">Date de fin (inclus) :</span>
 								<input type="date" id="end_date" name="end_date" required value="<?php echo esc_attr( $default_end_date ); ?>" style="width: 100%; padding: 8px 12px; border-radius: 4px; border: 1px solid #8c8f94; font-size: 14px;">
 							</div>
+						</div>
+
+						<div style="margin-top: 14px;">
+							<label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #1e3a8a; background: #eff6ff; padding: 8px 14px; border-radius: 6px; border: 1px solid #bfdbfe;">
+								<input type="checkbox" id="export_all_time" name="export_all_time" value="1">
+								<span>♾️ Exporter l'intégralité des contacts depuis l'origine du site (ignore la date de début)</span>
+							</label>
 						</div>
 					</div>
 
@@ -442,12 +500,61 @@ class Woo_Export_Contacts_Admin {
 		</div>
 
 		<script type="text/javascript">
+		var startDateInput        = document.getElementById('start_date');
+		var endDateInput          = document.getElementById('end_date');
+		var exportAllTimeCheckbox = document.getElementById('export_all_time');
+		var radioStrictNew        = document.querySelector('input[name="strict_new"][value="1"]');
+		var radioAllActive        = document.querySelector('input[name="strict_new"][value="0"]');
+		var earliestDateStr       = <?php echo wp_json_encode( $earliest_date ); ?>;
+
 		document.querySelectorAll('.confo-quick-date').forEach(function(btn) {
 			btn.addEventListener('click', function() {
-				document.getElementById('start_date').value = this.dataset.start;
-				document.getElementById('end_date').value = this.dataset.end;
+				if (this.classList.contains('confo-all-time-btn')) {
+					if (exportAllTimeCheckbox) {
+						exportAllTimeCheckbox.checked = true;
+						exportAllTimeCheckbox.dispatchEvent(new Event('change'));
+					} else {
+						if (startDateInput) startDateInput.value = this.dataset.start;
+						if (endDateInput) endDateInput.value     = this.dataset.end;
+						if (radioAllActive) radioAllActive.checked = true;
+					}
+				} else {
+					if (exportAllTimeCheckbox && exportAllTimeCheckbox.checked) {
+						exportAllTimeCheckbox.checked = false;
+						if (startDateInput) {
+							startDateInput.readOnly = false;
+							startDateInput.style.backgroundColor = '#ffffff';
+						}
+					}
+					if (startDateInput) startDateInput.value = this.dataset.start;
+					if (endDateInput) endDateInput.value     = this.dataset.end;
+				}
 			});
 		});
+
+		if (exportAllTimeCheckbox) {
+			exportAllTimeCheckbox.addEventListener('change', function() {
+				if (this.checked) {
+					if (startDateInput) {
+						startDateInput.dataset.previousVal = startDateInput.value;
+						startDateInput.value               = earliestDateStr;
+						startDateInput.readOnly            = true;
+						startDateInput.style.backgroundColor = '#f3f4f6';
+					}
+					if (radioAllActive) {
+						radioAllActive.checked = true;
+					}
+				} else {
+					if (startDateInput) {
+						startDateInput.readOnly            = false;
+						startDateInput.style.backgroundColor = '#ffffff';
+						if (startDateInput.dataset.previousVal) {
+							startDateInput.value = startDateInput.dataset.previousVal;
+						}
+					}
+				}
+			});
+		}
 
 		var defaultExcludedDomains = <?php echo wp_json_encode( implode( "\n", $default_domains ) ); ?>;
 		var resetDomainsBtn = document.getElementById('reset_excluded_domains_btn');
