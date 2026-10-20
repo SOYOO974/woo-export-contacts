@@ -27,6 +27,12 @@ Développée et maintenue par **SOYOO** pour Conforama.re et les sites e-commerc
    - Raccourci rapide en 1 clic et case à cocher dédiée pour exporter l'intégralité des contacts sans restriction de date de début.
    - Nom de fichier explicite : `contacts-...-tout-historique-au-...csv`.
 
+4. **⏱️ Suivi du Dernier Export & Téléchargement Incrémental 1-Clic** :
+   - Enregistrement automatique de la date et de l'heure exactes (à la seconde près) ainsi que du nombre de contacts extraits à chaque export.
+   - **Double compteur indépendant** : sépare automatiquement le point de repère du canal **Emailit / CRM** et celui du canal **ManyChat WhatsApp** pour éviter qu'un export Email n'écrase la date du dernier export WhatsApp.
+   - **Bouton 1-clic "Télécharger les nouveaux depuis le dernier export"** : extrait instantanément le delta exact (`+1 seconde` après le dernier export jusqu'à maintenant) avec la règle *Strictement Nouveaux Contacts*.
+   - **Protection anti-écrasement & édition manuelle** : décochage automatique de la mémorisation si vous exportez une période passée (ex. *Mois dernier*), et possibilité de modifier ou réinitialiser manuellement la date du point de repère.
+
 4. **Règle Avancée "Strictement Nouveaux Contacts"** :
    - Exclut automatiquement tout contact ayant déjà passé commande ou créé un compte avant la date de début sélectionnée.
    - Idéal pour isoler les vrais nouveaux prospects et éviter de sur-solliciter la base client existante dans Emailit ou ManyChat.

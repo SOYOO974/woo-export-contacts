@@ -23,6 +23,7 @@ class Woo_Export_Contacts_Admin {
 		add_action( 'admin_menu', array( $this, 'register_admin_menus' ), 999 );
 		add_action( 'admin_post_conforama_export_contacts_csv', array( $this, 'handle_export_submission' ), 1 );
 		add_action( 'admin_post_woo_export_contacts_csv', array( $this, 'handle_export_submission' ), 1 );
+		add_action( 'admin_post_woo_export_contacts_update_checkpoint', array( $this, 'handle_checkpoint_update' ), 1 );
 		add_action( 'admin_init', array( $this, 'maybe_suppress_admin_notices_early' ) );
 	}
 
@@ -138,11 +139,13 @@ class Woo_Export_Contacts_Admin {
 		}
 
 		// 3. Menu principal visible sous WooCommerce (intitulé court et clair)
+		$capability = current_user_can( 'manage_woocommerce' ) ? 'manage_woocommerce' : 'manage_options';
+
 		$main_page = add_submenu_page(
 			'woocommerce',
 			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
 			__( 'Export Contacts', 'woo-export-contacts' ),
-			'manage_woocommerce',
+			$capability,
 			'conforama-export-contacts',
 			array( $this, 'render_admin_page' )
 		);
@@ -152,7 +155,7 @@ class Woo_Export_Contacts_Admin {
 			null,
 			__( 'Export Contacts (Emailit & WhatsApp)', 'woo-export-contacts' ),
 			__( 'Export Contacts', 'woo-export-contacts' ),
-			'manage_woocommerce',
+			$capability,
 			'woo-export-contacts',
 			array( $this, 'render_admin_page' )
 		);
@@ -169,7 +172,7 @@ class Woo_Export_Contacts_Admin {
 	 * Intercepte et traite la soumission du formulaire d'export.
 	 */
 	public function handle_export_submission() {
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+		if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Action non autorisée : permissions insuffisantes.', 'woo-export-contacts' ) );
 		}
 
@@ -196,10 +199,95 @@ class Woo_Export_Contacts_Admin {
 	}
 
 	/**
+	 * Met à jour ou réinitialise manuellement le point de repère (date du dernier export).
+	 */
+	public function handle_checkpoint_update() {
+		if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Action non autorisée : permissions insuffisantes.', 'woo-export-contacts' ) );
+		}
+
+		if ( ! isset( $_POST['woo_export_contacts_checkpoint_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['woo_export_contacts_checkpoint_nonce'] ) ), 'woo_export_contacts_checkpoint_action' ) ) {
+			wp_die( esc_html__( 'Échec de la validation de sécurité CSRF. Veuillez rafraîchir la page et réessayer.', 'woo-export-contacts' ) );
+		}
+
+		$operation = isset( $_POST['checkpoint_operation'] ) ? sanitize_text_field( wp_unslash( $_POST['checkpoint_operation'] ) ) : 'set';
+		$channel   = isset( $_POST['checkpoint_channel'] ) ? sanitize_text_field( wp_unslash( $_POST['checkpoint_channel'] ) ) : 'all';
+		if ( ! in_array( $channel, array( 'all', 'email', 'whatsapp' ), true ) ) {
+			$channel = 'all';
+		}
+
+		if ( 'reset' === $operation ) {
+			Woo_Export_Contacts_Engine::update_manual_checkpoint( $channel, null );
+		} else {
+			$manual_date = isset( $_POST['manual_checkpoint_date'] ) ? sanitize_text_field( wp_unslash( $_POST['manual_checkpoint_date'] ) ) : '';
+			$manual_time = isset( $_POST['manual_checkpoint_time'] ) ? sanitize_text_field( wp_unslash( $_POST['manual_checkpoint_time'] ) ) : '00:00';
+
+			if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $manual_date ) ) {
+				if ( preg_match( '/^\d{2}:\d{2}$/', $manual_time ) ) {
+					$manual_time .= ':00';
+				} elseif ( ! preg_match( '/^\d{2}:\d{2}:\d{2}$/', $manual_time ) ) {
+					$manual_time = '00:00:00';
+				}
+				Woo_Export_Contacts_Engine::update_manual_checkpoint( $channel, $manual_date . ' ' . $manual_time );
+			}
+		}
+
+		wp_safe_redirect( admin_url( 'admin.php?page=conforama-export-contacts&checkpoint_updated=1' ) );
+		exit;
+	}
+
+	/**
+	 * Formate une entrée de dernier export pour l'affichage dans l'interface.
+	 *
+	 * @param array|null $entry Entrée d'historique d'export.
+	 * @return array Données formatées pour l'UI.
+	 */
+	private function format_checkpoint_for_ui( $entry ) {
+		if ( empty( $entry ) || empty( $entry['timestamp_local'] ) ) {
+			return array(
+				'exists'          => false,
+				'timestamp_local' => '',
+				'date_ymd'        => '',
+				'time_hm'         => '',
+				'display_date'    => 'Aucun export enregistré',
+				'display_meta'    => 'Le prochain export initialisera ce compteur automatiquement.',
+			);
+		}
+
+		$ts_local = $entry['timestamp_local'];
+		$ts_unix  = strtotime( $ts_local );
+		$date_ymd = gmdate( 'Y-m-d', $ts_unix );
+		$time_hm  = gmdate( 'H:i', $ts_unix );
+		$date_fr  = gmdate( 'd/m/Y \à H:i', $ts_unix );
+		$count    = isset( $entry['count'] ) ? (int) $entry['count'] : 0;
+
+		if ( $count < 0 ) {
+			$meta = 'Point de repère défini manuellement';
+		} elseif ( 1 === $count ) {
+			$meta = '1 contact exporté lors de cette extraction';
+		} else {
+			$meta = sprintf( '%d contacts exportés lors de cette extraction', $count );
+		}
+
+		if ( ! empty( $entry['user_login'] ) ) {
+			$meta .= ' (par ' . $entry['user_login'] . ')';
+		}
+
+		return array(
+			'exists'          => true,
+			'timestamp_local' => $ts_local,
+			'date_ymd'        => $date_ymd,
+			'time_hm'         => $time_hm,
+			'display_date'    => $date_fr,
+			'display_meta'    => $meta,
+		);
+	}
+
+	/**
 	 * Affiche l'interface d'exportation de contacts.
 	 */
 	public function render_admin_page() {
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+		if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Vous n\'avez pas les permissions nécessaires pour accéder à cette page.', 'woo-export-contacts' ) );
 		}
 
@@ -225,9 +313,16 @@ class Woo_Export_Contacts_Admin {
 		$hpos_enabled = class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' )
 			&& \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
 
-		$default_start_date = gmdate( 'Y-m-01' ); // 1er jour du mois en cours
-		$default_end_date   = gmdate( 'Y-m-d' );    // Aujourd'hui
+		$today_local        = function_exists( 'current_time' ) ? current_time( 'Y-m-d' ) : gmdate( 'Y-m-d' );
+		$default_start_date = gmdate( 'Y-m-01', strtotime( $today_local ) ); // 1er jour du mois en cours
+		$default_end_date   = $today_local;                                 // Aujourd'hui
 		$action_url         = admin_url( 'admin-post.php' );
+
+		// Récupération de l'historique des derniers exports (par canal et global)
+		$last_exports = Woo_Export_Contacts_Engine::get_last_exports();
+		$ui_email     = $this->format_checkpoint_for_ui( $last_exports['email'] ?? $last_exports['any'] );
+		$ui_whatsapp  = $this->format_checkpoint_for_ui( $last_exports['whatsapp'] ?? $last_exports['any'] );
+		$ui_any       = $this->format_checkpoint_for_ui( $last_exports['any'] );
 
 		// Calcul de la date d'origine du site (première commande ou premier utilisateur enregistré)
 		$earliest_date   = '2015-01-01';
@@ -272,7 +367,7 @@ class Woo_Export_Contacts_Admin {
 			$excluded_domains_val = implode( "\n", $default_domains );
 		}
 
-		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.2.1';
+		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.4.0';
 		$badge_text      = $is_confo ? 'Conforama.re &bull; v' . $version_display : esc_html( get_bloginfo( 'name' ) ) . ' &bull; v' . $version_display;
 		?>
 		<div class="wrap woo-export-contacts-wrap" style="max-width: 980px; margin-top: 25px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
@@ -292,6 +387,26 @@ class Woo_Export_Contacts_Admin {
 				#wpbody-content > .update-nag {
 					display: none !important;
 				}
+				.woo-checkpoint-card {
+					background: #f8fafc;
+					border: 1px solid #cbd5e1;
+					border-left: 4px solid #0f766e;
+					border-radius: 8px;
+					padding: 18px 22px;
+					margin-bottom: 24px;
+				}
+				.woo-checkpoint-channel-box {
+					background: #ffffff;
+					border: 1px solid #e2e8f0;
+					border-radius: 6px;
+					padding: 10px 14px;
+					transition: all 0.2s ease;
+				}
+				.woo-checkpoint-channel-box.is-active-channel {
+					border-color: #0d9488;
+					box-shadow: 0 0 0 1px #0d9488;
+					background: #f0fdfa;
+				}
 			</style>
 
 			<!-- EN-TETE CONFORAMA / SOYOO -->
@@ -307,7 +422,7 @@ class Woo_Export_Contacts_Admin {
 				</div>
 				<div style="display: flex; align-items: center; gap: 8px;">
 					<span style="background: <?php echo $hpos_enabled ? '#dcfce7; color: #166534;' : '#fef3c7; color: #92400e;'; ?> font-weight: 700; font-size: 11px; padding: 5px 10px; border-radius: 20px; text-transform: uppercase;">
-						<?php echo $hpos_enabled ? '⚡ HPOS Actif' : '📦 Commandes Legacy'; ?>
+						<?php echo $hpos_enabled ? 'HPOS Actif' : 'Commandes Legacy'; ?>
 					</span>
 					<div style="background: #fff000; color: #111111; font-weight: 800; font-size: 11px; padding: 6px 12px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px;">
 						<?php echo wp_kses_post( $badge_text ); ?>
@@ -317,27 +432,141 @@ class Woo_Export_Contacts_Admin {
 			<hr class="wp-header-end" style="display: none !important;">
 
 			<div style="background: #ffffff; border: 1px solid #dcdcde; border-radius: 8px; padding: 28px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+
+				<!-- BANDEAU POINT DE REPERE : DERNIER EXPORT & TELECHARGEMENT INCREMENTAL 1-CLIC -->
+				<div class="woo-checkpoint-card">
+					<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;">
+						<div style="flex: 1 1 460px;">
+							<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+								<span class="dashicons dashicons-backup" style="color: #0f766e; font-size: 20px; width: 20px; height: 20px;"></span>
+								<strong style="font-size: 14px; color: #0f172a;">Point de repère &bull; Suivi du dernier export</strong>
+								<button type="button" id="toggle-manual-checkpoint-btn" style="background: none; border: none; color: #0284c7; font-size: 12px; text-decoration: underline; cursor: pointer; margin-left: 6px; padding: 0;">
+									Modifier / Réinitialiser la date
+								</button>
+							</div>
+
+							<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+								<div id="checkpoint-box-email" class="woo-checkpoint-channel-box is-active-channel">
+									<div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; margin-bottom: 3px;">
+										Canal Emailit / CRM
+									</div>
+									<div style="font-size: 14px; font-weight: 700; color: <?php echo $ui_email['exists'] ? '#0f172a' : '#94a3b8'; ?>;">
+										<?php echo esc_html( $ui_email['display_date'] ); ?>
+									</div>
+									<div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+										<?php echo esc_html( $ui_email['display_meta'] ); ?>
+									</div>
+								</div>
+
+								<div id="checkpoint-box-whatsapp" class="woo-checkpoint-channel-box">
+									<div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; margin-bottom: 3px;">
+										Canal ManyChat WhatsApp
+									</div>
+									<div style="font-size: 14px; font-weight: 700; color: <?php echo $ui_whatsapp['exists'] ? '#0f172a' : '#94a3b8'; ?>;">
+										<?php echo esc_html( $ui_whatsapp['display_date'] ); ?>
+									</div>
+									<div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+										<?php echo esc_html( $ui_whatsapp['display_meta'] ); ?>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+							<button type="button" id="one-click-since-last-btn" class="button button-primary" <?php echo ! $ui_any['exists'] ? 'disabled' : ''; ?> style="background: #0f766e; border-color: #115e59; color: #ffffff; font-weight: 700; padding: 8px 18px; height: auto; line-height: 1.4; display: inline-flex; align-items: center; gap: 8px; border-radius: 6px; box-shadow: 0 2px 5px rgba(15,118,110,0.25);">
+								<span class="dashicons dashicons-download" style="font-size: 18px; width: 18px; height: 18px;"></span>
+								<span id="one-click-since-last-label">
+									<?php if ( $ui_email['exists'] ) : ?>
+										Télécharger les nouveaux depuis le <?php echo esc_html( $ui_email['display_date'] ); ?>
+									<?php else : ?>
+										Aucun dernier export enregistré
+									<?php endif; ?>
+								</span>
+							</button>
+							<small id="one-click-since-last-hint" style="font-size: 11px; color: #475569;">
+								<?php if ( $ui_any['exists'] ) : ?>
+									Extrait uniquement le delta exact (+1s) et met à jour le point de repère.
+								<?php else : ?>
+									Lancez un premier export ci-dessous (ou définissez une date manuellement).
+								<?php endif; ?>
+							</small>
+						</div>
+					</div>
+
+					<!-- TIROIR D'EDITION MANUELLE DU POINT DE REPERE (HORS FORMULAIRE PRINCIPAL) -->
+					<div id="manual-checkpoint-drawer" style="display: none; margin-top: 16px; padding-top: 14px; border-top: 1px dashed #cbd5e1;">
+						<form method="POST" action="<?php echo esc_url( $action_url ); ?>" style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;">
+							<?php wp_nonce_field( 'woo_export_contacts_checkpoint_action', 'woo_export_contacts_checkpoint_nonce' ); ?>
+							<input type="hidden" name="action" value="woo_export_contacts_update_checkpoint">
+
+							<div>
+								<label style="display: block; font-size: 11px; font-weight: 700; color: #334155; margin-bottom: 4px;">Canal à modifier :</label>
+								<select name="checkpoint_channel" style="font-size: 12px; min-height: 32px;">
+									<option value="all">Tous les canaux (Emailit + WhatsApp)</option>
+									<option value="email">Canal Emailit / CRM uniquement</option>
+									<option value="whatsapp">Canal ManyChat WhatsApp uniquement</option>
+								</select>
+							</div>
+
+							<div>
+								<label style="display: block; font-size: 11px; font-weight: 700; color: #334155; margin-bottom: 4px;">Date du dernier export :</label>
+								<input type="date" name="manual_checkpoint_date" value="<?php echo esc_attr( $ui_any['exists'] ? $ui_any['date_ymd'] : $default_start_date ); ?>" style="font-size: 12px; min-height: 32px; padding: 0 8px;">
+							</div>
+
+							<div>
+								<label style="display: block; font-size: 11px; font-weight: 700; color: #334155; margin-bottom: 4px;">Heure :</label>
+								<input type="time" name="manual_checkpoint_time" value="<?php echo esc_attr( $ui_any['exists'] ? $ui_any['time_hm'] : '00:00' ); ?>" style="font-size: 12px; min-height: 32px; padding: 0 8px;">
+							</div>
+
+							<button type="submit" name="checkpoint_operation" value="set" class="button button-secondary" style="min-height: 32px; font-weight: 600;">
+								Enregistrer cette date
+							</button>
+
+							<?php if ( $ui_any['exists'] ) : ?>
+							<button type="submit" name="checkpoint_operation" value="reset" class="button button-link-delete" style="min-height: 32px;">
+								Réinitialiser le compteur
+							</button>
+							<?php endif; ?>
+						</form>
+					</div>
+				</div>
+
 				<form method="POST" action="<?php echo esc_url( $action_url ); ?>" id="conforama-export-form">
 					<?php wp_nonce_field( 'conforama_export_contacts_action', 'conforama_export_contacts_nonce' ); ?>
 					<input type="hidden" name="action" value="conforama_export_contacts_csv">
+					<input type="hidden" id="since_last_export" name="since_last_export" value="0">
+					<input type="hidden" id="since_last_timestamp" name="since_last_timestamp" value="">
 
 					<!-- 1. PLAGE DE DATES AVEC RACCOURCIS -->
 					<div style="margin-bottom: 24px;">
 						<label style="display: block; font-weight: 700; font-size: 14px; margin-bottom: 10px; color: #111111;">
-							📅 Période de capture des contacts
+							1. Période de capture des contacts
 						</label>
 
 						<!-- Raccourcis rapides -->
 						<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;">
-							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( '-7 days' ) ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">7 derniers jours</button>
-							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( '-30 days' ) ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">30 derniers jours</button>
-							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-01' ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">Mois en cours</button>
+							<button type="button" id="quick-btn-since-last" class="button button-small" <?php echo ! $ui_any['exists'] ? 'disabled' : ''; ?> style="border-color: #0f766e; color: #0f766e; background: #f0fdfa; font-weight: 700;">
+								Depuis le dernier export<?php echo $ui_email['exists'] ? ' (' . esc_html( $ui_email['display_date'] ) . ')' : ''; ?>
+							</button>
+							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( $today_local . ' -7 days' ) ) ); ?>" data-end="<?php echo esc_attr( $today_local ); ?>">7 derniers jours</button>
+							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( $today_local . ' -30 days' ) ) ); ?>" data-end="<?php echo esc_attr( $today_local ); ?>">30 derniers jours</button>
+							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-01', strtotime( $today_local ) ) ); ?>" data-end="<?php echo esc_attr( $today_local ); ?>">Mois en cours</button>
 							<button type="button" class="button button-small confo-quick-date" data-start="<?php echo esc_attr( gmdate( 'Y-m-01', strtotime( 'first day of last month' ) ) ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-t', strtotime( 'last month' ) ) ); ?>">Mois dernier</button>
 							<?php if ( $is_confo ) : ?>
-							<button type="button" class="button button-small confo-quick-date" style="border-color: #e2001a; color: #e2001a; font-weight: 600;" data-start="2026-09-05" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>">💥 Période Soldes (Depuis le 05/09)</button>
+							<button type="button" class="button button-small confo-quick-date" style="border-color: #e2001a; color: #e2001a; font-weight: 600;" data-start="2026-09-05" data-end="<?php echo esc_attr( $today_local ); ?>">Période Soldes (Depuis le 05/09)</button>
 							<?php endif; ?>
-							<button type="button" class="button button-small confo-quick-date confo-all-time-btn" data-start="<?php echo esc_attr( $earliest_date ); ?>" data-end="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>" style="border-color: #2563eb; color: #1d4ed8; font-weight: 700; background: #eff6ff;">
-								♾️ Tout l'historique (Depuis le début : <?php echo esc_html( gmdate( 'd/m/Y', strtotime( $earliest_date ) ) ); ?>)
+							<button type="button" class="button button-small confo-quick-date confo-all-time-btn" data-start="<?php echo esc_attr( $earliest_date ); ?>" data-end="<?php echo esc_attr( $today_local ); ?>" style="border-color: #2563eb; color: #1d4ed8; font-weight: 700; background: #eff6ff;">
+								Tout l'historique (Depuis le début : <?php echo esc_html( gmdate( 'd/m/Y', strtotime( $earliest_date ) ) ); ?>)
+							</button>
+						</div>
+
+						<!-- Bandeau d'état quand le mode "Depuis le dernier export" est sélectionné -->
+						<div id="since-last-active-banner" style="display: none; background: #f0fdfa; border: 1px solid #99f6e4; color: #115e59; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; align-items: center; justify-content: space-between;">
+							<span>
+								<strong>Mode incrémental précis activé :</strong> extraction des contacts enregistrés après le <strong id="since-last-banner-time"></strong> (à la seconde près, zéro doublon).
+							</span>
+							<button type="button" id="cancel-since-last-btn" style="background: none; border: none; color: #0f766e; text-decoration: underline; cursor: pointer; font-size: 12px; font-weight: 600;">
+								Revenir aux dates manuelles
 							</button>
 						</div>
 
@@ -355,7 +584,7 @@ class Woo_Export_Contacts_Admin {
 						<div style="margin-top: 14px;">
 							<label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #1e3a8a; background: #eff6ff; padding: 8px 14px; border-radius: 6px; border: 1px solid #bfdbfe;">
 								<input type="checkbox" id="export_all_time" name="export_all_time" value="1">
-								<span>♾️ Exporter l'intégralité des contacts depuis l'origine du site (ignore la date de début)</span>
+								<span>Exporter l'intégralité des contacts depuis l'origine du site (ignore la date de début)</span>
 							</label>
 						</div>
 					</div>
@@ -365,13 +594,13 @@ class Woo_Export_Contacts_Admin {
 					<!-- 2. FILTRAGE CLIENTS EXISTANTS -->
 					<div style="margin-bottom: 24px;">
 						<label style="display: block; font-weight: 700; font-size: 14px; margin-bottom: 10px; color: #111111;">
-							🎯 Règle de sélection des contacts
+							2. Règle de sélection des contacts
 						</label>
 						<div style="display: flex; flex-direction: column; gap: 12px; background: #fafafa; border: 1px solid #eeeeee; border-radius: 6px; padding: 14px 16px;">
 							<label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
 								<input type="radio" name="strict_new" value="1" checked style="margin-top: 3px;">
 								<span>
-									<strong style="color: #111111;">Strictement Nouveaux Contacts (Recommandé pour Emailit)</strong><br>
+									<strong style="color: #111111;">Strictement Nouveaux Contacts (Recommandé pour Emailit &amp; WhatsApp)</strong><br>
 									<small style="color: #666666;">Exclut automatiquement tout email ayant déjà commandé ou créé un compte avant la date de début. Idéal pour cibler vos vrais nouveaux prospects sans relancer des clients déjà en base.</small>
 								</span>
 							</label>
@@ -393,33 +622,33 @@ class Woo_Export_Contacts_Admin {
 						<!-- Sources -->
 						<div>
 							<label style="display: block; font-weight: 700; font-size: 14px; margin-bottom: 12px; color: #111111;">
-								🔍 Sources à inclure
+								3. Sources à inclure
 							</label>
 							<div style="display: flex; flex-direction: column; gap: 10px;">
 								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 									<input type="checkbox" name="sources[]" value="orders" checked>
-									<span>🛍️ Commandes WooCommerce (Clients &amp; Invités)</span>
+									<span>Commandes WooCommerce (Clients &amp; Invités)</span>
 								</label>
 								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 									<input type="checkbox" name="sources[]" value="users" checked>
-									<span>👤 Comptes clients WordPress créés</span>
+									<span>Comptes clients WordPress créés</span>
 								</label>
 								<?php if ( $has_cartflows ) : ?>
 								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 									<input type="checkbox" name="sources[]" value="abandoned_carts" checked>
-									<span>🛒 Paniers abandonnés (Cart Abandonment)</span>
+									<span>Paniers abandonnés (Cart Abandonment)</span>
 								</label>
 								<?php endif; ?>
 								<?php if ( $has_mailpoet ) : ?>
 								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 									<input type="checkbox" name="sources[]" value="mailpoet" checked>
-									<span>📩 Abonnés Newsletter (MailPoet)</span>
+									<span>Abonnés Newsletter (MailPoet)</span>
 								</label>
 								<?php endif; ?>
 								<?php if ( $has_waitlist ) : ?>
 								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 									<input type="checkbox" name="sources[]" value="waitlist" checked>
-									<span>🔔 Alertes Rupture / Waitlist</span>
+									<span>Alertes Rupture / Waitlist</span>
 								</label>
 								<?php endif; ?>
 							</div>
@@ -428,17 +657,17 @@ class Woo_Export_Contacts_Admin {
 						<!-- Options de format -->
 						<div>
 							<label style="display: block; font-weight: 700; font-size: 14px; margin-bottom: 12px; color: #111111;">
-								⚙️ Configuration de l'export &amp; Destination
+								4. Configuration de l'export &amp; Destination
 							</label>
 							<div style="display: flex; flex-direction: column; gap: 12px;">
 								<div>
 									<label for="csv_columns" style="display: block; font-size: 12px; font-weight: 600; color: #555555; margin-bottom: 4px;">Destination &amp; Structure des colonnes :</label>
 									<select id="csv_columns" name="csv_columns" style="width: 100%; padding: 6px 10px; border-radius: 4px;">
-										<option value="emailit_ready" selected>🚀 Format Emailit Ready (Email, First Name, Last Name, Phone, Tags)</option>
-										<option value="manychat_whatsapp">💬 Format ManyChat WhatsApp (Phone, First Name, Last Name, Tags — Sans e-mail, 100% Mobile)</option>
-										<option value="manychat_whatsapp_email">💬 Format ManyChat WhatsApp + Email (Phone, First Name, Last Name, Email, Tags)</option>
-										<option value="full">📊 Format Complet / Audit (Prénom, Nom, Email, Téléphone, Source, Tag, Date)</option>
-										<option value="simple">⚡ Format Simplifié (Prénom, Nom, Email)</option>
+										<option value="emailit_ready" selected>Format Emailit Ready (Email, First Name, Last Name, Phone, Tags)</option>
+										<option value="manychat_whatsapp">Format ManyChat WhatsApp (Phone, First Name, Last Name, Tags — Sans e-mail, 100% Mobile)</option>
+										<option value="manychat_whatsapp_email">Format ManyChat WhatsApp + Email (Phone, First Name, Last Name, Email, Tags)</option>
+										<option value="full">Format Complet / Audit (Prénom, Nom, Email, Téléphone, Source, Tag, Date)</option>
+										<option value="simple">Format Simplifié (Prénom, Nom, Email)</option>
 									</select>
 								</div>
 								<div>
@@ -455,7 +684,7 @@ class Woo_Export_Contacts_Admin {
 								<div>
 									<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
 										<label for="excluded_domains" style="font-size: 12px; font-weight: 600; color: #555555;">
-											🚫 Domaines e-mails à exclure :
+											Domaines e-mails à exclure :
 										</label>
 										<button type="button" id="reset_excluded_domains_btn" style="background: none; border: none; padding: 0; color: #0073aa; font-size: 11px; text-decoration: underline; cursor: pointer;">
 											Rétablir par défaut
@@ -472,15 +701,15 @@ class Woo_Export_Contacts_Admin {
 					</div>
 
 					<!-- ENCART CONSEIL DYNAMIQUE -->
-					<div id="export-advice-box" style="background: #fff8e5; border-left: 4px solid #ffcc00; padding: 14px 18px; margin-bottom: 25px; border-radius: 0 4px 4px 0; transition: all 0.25s ease;">
+					<div id="export-advice-box" style="background: #fff8e5; border-left: 4px solid #ffcc00; padding: 14px 18px; margin-bottom: 20px; border-radius: 0 4px 4px 0; transition: all 0.25s ease;">
 						<div id="export-advice-emailit">
 							<p style="margin: 0; font-size: 13px; color: #444444; line-height: 1.5;">
-								💡 <strong>Spécifique Emailit :</strong> Le mode <em>Emailit Ready</em> inclut la colonne <code>Tags</code> (ex. <code><?php echo esc_attr( $default_tag ); ?>_client</code>, <code><?php echo esc_attr( $default_tag ); ?>_panier_abandonne</code>, <code><?php echo esc_attr( $default_tag ); ?>_newsletter</code>). Lors de l'import dans Emailit, vous pourrez mapper directement la colonne <code>Tags</code> pour segmenter automatiquement vos listes sans aucune manipulation manuelle.
+								<strong>Spécifique Emailit :</strong> Le mode <em>Emailit Ready</em> inclut la colonne <code>Tags</code> (ex. <code><?php echo esc_attr( $default_tag ); ?>_client</code>, <code><?php echo esc_attr( $default_tag ); ?>_panier_abandonne</code>, <code><?php echo esc_attr( $default_tag ); ?>_newsletter</code>). Lors de l'import dans Emailit, vous pourrez mapper directement la colonne <code>Tags</code> pour segmenter automatiquement vos listes sans aucune manipulation manuelle.
 							</p>
 						</div>
 						<div id="export-advice-manychat" style="display: none;">
 							<p style="margin: 0; font-size: 13px; color: #065f46; line-height: 1.6;">
-								💬 <strong>Spécifique ManyChat WhatsApp :</strong><br>
+								<strong>Spécifique ManyChat WhatsApp :</strong><br>
 								&bull; <strong>100% Numéros Mobiles E.164 :</strong> Seuls les contacts ayant un numéro de téléphone valide (+262 / +33) sont exportés et dédoublonnés.<br>
 								&bull; <strong>Sans e-mail (Recommandé) :</strong> Contourne immédiatement le blocage <em>« Request approval »</em> de ManyChat pour le canal Email et évite de gonfler inutilement votre palier de facturation avec des contacts sans numéro WhatsApp.<br>
 								&bull; <strong>Mapping ManyChat :</strong> Lors de l'import CSV dans ManyChat, mappez la colonne <code>phone</code> sur le champ système <strong>WhatsApp ID</strong>.
@@ -488,27 +717,182 @@ class Woo_Export_Contacts_Admin {
 						</div>
 					</div>
 
-					<!-- BOUTON D'ACTION -->
-					<div>
-						<button type="submit" id="export-submit-btn" class="button button-primary button-hero" style="background-color: #e2001a; border-color: #b50015; font-weight: 700; padding: 6px 28px; display: inline-flex; align-items: center; gap: 8px; text-shadow: none; box-shadow: 0 2px 6px rgba(226,0,26,0.3);">
-							<span class="dashicons dashicons-download" style="font-size: 20px; line-height: 28px;"></span>
-							<span id="export-submit-label">Générer et Télécharger le CSV Emailit</span>
-						</button>
+					<!-- OPTION DE MEMORISATION DU POINT DE REPERE & BOUTON D'ACTION -->
+					<div style="display: flex; flex-direction: column; gap: 14px;">
+						<div>
+							<label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #0f172a;">
+								<input type="checkbox" id="save_last_export" name="save_last_export" value="1" checked>
+								<span>Enregistrer la date et l'heure de cet export comme nouveau point de repère</span>
+								<small id="save-checkpoint-auto-note" style="display: none; color: #d97706; font-weight: 500;">(décoché automatiquement car la période sélectionnée est dans le passé)</small>
+							</label>
+						</div>
+
+						<div>
+							<button type="submit" id="export-submit-btn" class="button button-primary button-hero" style="background-color: #e2001a; border-color: #b50015; font-weight: 700; padding: 6px 28px; display: inline-flex; align-items: center; gap: 8px; text-shadow: none; box-shadow: 0 2px 6px rgba(226,0,26,0.3);">
+								<span class="dashicons dashicons-download" style="font-size: 20px; line-height: 28px;"></span>
+								<span id="export-submit-label">Générer et Télécharger le CSV Emailit</span>
+							</button>
+						</div>
 					</div>
 				</form>
 			</div>
 		</div>
 
 		<script type="text/javascript">
-		var startDateInput        = document.getElementById('start_date');
-		var endDateInput          = document.getElementById('end_date');
-		var exportAllTimeCheckbox = document.getElementById('export_all_time');
-		var radioStrictNew        = document.querySelector('input[name="strict_new"][value="1"]');
-		var radioAllActive        = document.querySelector('input[name="strict_new"][value="0"]');
-		var earliestDateStr       = <?php echo wp_json_encode( $earliest_date ); ?>;
+		var startDateInput         = document.getElementById('start_date');
+		var endDateInput           = document.getElementById('end_date');
+		var exportAllTimeCheckbox  = document.getElementById('export_all_time');
+		var sinceLastInput         = document.getElementById('since_last_export');
+		var sinceLastTsInput       = document.getElementById('since_last_timestamp');
+		var sinceLastBanner        = document.getElementById('since-last-active-banner');
+		var sinceLastBannerTime    = document.getElementById('since-last-banner-time');
+		var cancelSinceLastBtn     = document.getElementById('cancel-since-last-btn');
+		var quickBtnSinceLast      = document.getElementById('quick-btn-since-last');
+		var oneClickSinceLastBtn   = document.getElementById('one-click-since-last-btn');
+		var oneClickSinceLastLabel = document.getElementById('one-click-since-last-label');
+		var saveLastExportCheckbox = document.getElementById('save_last_export');
+		var saveCheckpointAutoNote = document.getElementById('save-checkpoint-auto-note');
+		var checkpointBoxEmail     = document.getElementById('checkpoint-box-email');
+		var checkpointBoxWhatsapp  = document.getElementById('checkpoint-box-whatsapp');
+		var toggleManualDrawerBtn  = document.getElementById('toggle-manual-checkpoint-btn');
+		var manualCheckpointDrawer = document.getElementById('manual-checkpoint-drawer');
+		var exportForm             = document.getElementById('conforama-export-form');
+
+		var radioStrictNew         = document.querySelector('input[name="strict_new"][value="1"]');
+		var radioAllActive         = document.querySelector('input[name="strict_new"][value="0"]');
+		var earliestDateStr        = <?php echo wp_json_encode( $earliest_date ); ?>;
+		var todayDateStr           = <?php echo wp_json_encode( $today_local ); ?>;
+		var checkpointsData        = <?php echo wp_json_encode( array( 'email' => $ui_email, 'whatsapp' => $ui_whatsapp, 'any' => $ui_any ) ); ?>;
+
+		function getActiveChannelKey() {
+			var columnsSelect = document.getElementById('csv_columns');
+			if (!columnsSelect) return 'email';
+			var val = columnsSelect.value;
+			return (val === 'manychat_whatsapp' || val === 'manychat_whatsapp_email') ? 'whatsapp' : 'email';
+		}
+
+		function getActiveCheckpoint() {
+			var ch = getActiveChannelKey();
+			if (checkpointsData[ch] && checkpointsData[ch].exists) {
+				return checkpointsData[ch];
+			}
+			if (checkpointsData.any && checkpointsData.any.exists) {
+				return checkpointsData.any;
+			}
+			return { exists: false };
+		}
+
+		function deactivateSinceLastMode() {
+			if (sinceLastInput) sinceLastInput.value = '0';
+			if (sinceLastTsInput) sinceLastTsInput.value = '';
+			if (sinceLastBanner) sinceLastBanner.style.display = 'none';
+			if (startDateInput && (!exportAllTimeCheckbox || !exportAllTimeCheckbox.checked)) {
+				startDateInput.readOnly = false;
+				startDateInput.style.backgroundColor = '#ffffff';
+			}
+		}
+
+		function activateSinceLastMode() {
+			var cp = getActiveCheckpoint();
+			if (!cp || !cp.exists) return false;
+
+			if (exportAllTimeCheckbox && exportAllTimeCheckbox.checked) {
+				exportAllTimeCheckbox.checked = false;
+			}
+			if (sinceLastInput) sinceLastInput.value = '1';
+			if (sinceLastTsInput) sinceLastTsInput.value = cp.timestamp_local;
+			if (startDateInput) {
+				startDateInput.value = cp.date_ymd;
+				startDateInput.readOnly = true;
+				startDateInput.style.backgroundColor = '#f0fdfa';
+			}
+			if (endDateInput) {
+				endDateInput.value = todayDateStr;
+			}
+			if (radioStrictNew) {
+				radioStrictNew.checked = true;
+			}
+			if (saveLastExportCheckbox) {
+				saveLastExportCheckbox.checked = true;
+				if (saveCheckpointAutoNote) saveCheckpointAutoNote.style.display = 'none';
+			}
+			if (sinceLastBannerTime) {
+				sinceLastBannerTime.textContent = cp.display_date;
+			}
+			if (sinceLastBanner) {
+				sinceLastBanner.style.display = 'flex';
+			}
+			return true;
+		}
+
+		function syncSaveCheckpointWithEndDate() {
+			if (!endDateInput || !saveLastExportCheckbox) return;
+			if (endDateInput.value && endDateInput.value < todayDateStr) {
+				saveLastExportCheckbox.checked = false;
+				if (saveCheckpointAutoNote) saveCheckpointAutoNote.style.display = 'inline';
+			} else {
+				saveLastExportCheckbox.checked = true;
+				if (saveCheckpointAutoNote) saveCheckpointAutoNote.style.display = 'none';
+			}
+		}
+
+		if (toggleManualDrawerBtn && manualCheckpointDrawer) {
+			toggleManualDrawerBtn.addEventListener('click', function(e) {
+				e.preventDefault();
+				manualCheckpointDrawer.style.display = (manualCheckpointDrawer.style.display === 'none') ? 'block' : 'none';
+			});
+		}
+
+		if (quickBtnSinceLast) {
+			quickBtnSinceLast.addEventListener('click', function() {
+				activateSinceLastMode();
+			});
+		}
+
+		if (cancelSinceLastBtn) {
+			cancelSinceLastBtn.addEventListener('click', function() {
+				deactivateSinceLastMode();
+			});
+		}
+
+		if (oneClickSinceLastBtn) {
+			oneClickSinceLastBtn.addEventListener('click', function() {
+				if (activateSinceLastMode() && exportForm) {
+					exportForm.requestSubmit ? exportForm.requestSubmit() : exportForm.submit();
+					setTimeout(function() {
+						window.location.reload();
+					}, 2500);
+				}
+			});
+		}
+
+		if (exportForm) {
+			exportForm.addEventListener('submit', function() {
+				if (saveLastExportCheckbox && saveLastExportCheckbox.checked) {
+					setTimeout(function() {
+						window.location.reload();
+					}, 2500);
+				}
+			});
+		}
+
+		if (startDateInput) {
+			startDateInput.addEventListener('change', function() {
+				if (sinceLastInput && sinceLastInput.value === '1') {
+					deactivateSinceLastMode();
+				}
+			});
+		}
+
+		if (endDateInput) {
+			endDateInput.addEventListener('change', function() {
+				syncSaveCheckpointWithEndDate();
+			});
+		}
 
 		document.querySelectorAll('.confo-quick-date').forEach(function(btn) {
 			btn.addEventListener('click', function() {
+				deactivateSinceLastMode();
 				if (this.classList.contains('confo-all-time-btn')) {
 					if (exportAllTimeCheckbox) {
 						exportAllTimeCheckbox.checked = true;
@@ -529,12 +913,14 @@ class Woo_Export_Contacts_Admin {
 					if (startDateInput) startDateInput.value = this.dataset.start;
 					if (endDateInput) endDateInput.value     = this.dataset.end;
 				}
+				syncSaveCheckpointWithEndDate();
 			});
 		});
 
 		if (exportAllTimeCheckbox) {
 			exportAllTimeCheckbox.addEventListener('change', function() {
 				if (this.checked) {
+					deactivateSinceLastMode();
 					if (startDateInput) {
 						startDateInput.dataset.previousVal = startDateInput.value;
 						startDateInput.value               = earliestDateStr;
@@ -579,6 +965,42 @@ class Woo_Export_Contacts_Admin {
 			if (!columnsSelect) return;
 			var val = columnsSelect.value;
 			var isManychat = (val === 'manychat_whatsapp' || val === 'manychat_whatsapp_email');
+			var cp = getActiveCheckpoint();
+
+			if (checkpointBoxEmail && checkpointBoxWhatsapp) {
+				if (isManychat) {
+					checkpointBoxEmail.classList.remove('is-active-channel');
+					checkpointBoxWhatsapp.classList.add('is-active-channel');
+				} else {
+					checkpointBoxWhatsapp.classList.remove('is-active-channel');
+					checkpointBoxEmail.classList.add('is-active-channel');
+				}
+			}
+
+			if (oneClickSinceLastBtn && oneClickSinceLastLabel) {
+				if (cp && cp.exists) {
+					oneClickSinceLastBtn.disabled = false;
+					oneClickSinceLastLabel.textContent = (isManychat ? 'Télécharger les nouveaux WhatsApp depuis le ' : 'Télécharger les nouveaux Emailit depuis le ') + cp.display_date;
+				} else {
+					oneClickSinceLastBtn.disabled = true;
+					oneClickSinceLastLabel.textContent = 'Aucun dernier export enregistré';
+				}
+			}
+
+			if (quickBtnSinceLast) {
+				if (cp && cp.exists) {
+					quickBtnSinceLast.disabled = false;
+					quickBtnSinceLast.textContent = 'Depuis le dernier export (' + cp.display_date + ')';
+				} else {
+					quickBtnSinceLast.disabled = true;
+					quickBtnSinceLast.textContent = 'Depuis le dernier export';
+				}
+			}
+
+			if (sinceLastInput && sinceLastInput.value === '1') {
+				activateSinceLastMode();
+			}
+
 			if (isManychat) {
 				if (adviceBox) {
 					adviceBox.style.background = '#f0fdf4';

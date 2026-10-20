@@ -47,3 +47,8 @@
    - Raccourci rapide et option permettant d'extraire la totalité des contacts depuis la date d'origine du site (détectée automatiquement en base via `MIN(user_registered)` et `MIN(date_created_gmt)`).
    - Neutralisation automatique de l'ancien snippet legacy sur Conforama.re (`conforama_export_contacts_register_menu` et hooks associés) pour éliminer les doublons de menu et de formulaire sur l'interface.
 
+7. **Suivi du Dernier Export & Extraction Incrémentale 1-Clic (v2.4.0)** :
+   - Persistance en base (`woo_export_contacts_last_exports` et `woo_export_contacts_last_export`) de la date/heure exacte (`timestamp_local` et `timestamp_gmt`), du nombre de contacts exportés et de l'utilisateur, avec séparation par canal (**Emailit / CRM** vs **ManyChat WhatsApp**).
+   - Mode incrémental à la seconde près (`+1s` après le dernier export) éliminant tout risque de trou ou de doublon même en cas de multiples exports dans la même journée.
+   - Bouton 1-clic dans le bandeau supérieur et raccourci rapide dans les périodes, complétés par un tiroir d'édition/réinitialisation manuelle du point de repère et une protection automatique contre l'écrasement lors des exports de périodes passées.
+

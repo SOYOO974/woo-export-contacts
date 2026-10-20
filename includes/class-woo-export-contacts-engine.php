@@ -15,6 +15,135 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Woo_Export_Contacts_Engine {
 
 	/**
+	 * Nom de l'option stockant les métadonnées des derniers exports par canal.
+	 */
+	const OPTION_LAST_EXPORTS = 'woo_export_contacts_last_exports';
+
+	/**
+	 * Détermine le canal logique ('whatsapp' ou 'email') selon le mode de colonnes CSV.
+	 *
+	 * @param string $columns_mode Mode de colonnes sélectionné.
+	 * @return string 'whatsapp' ou 'email'.
+	 */
+	public static function get_channel_for_mode( $columns_mode ) {
+		return in_array( $columns_mode, array( 'manychat_whatsapp', 'manychat_whatsapp_email' ), true )
+			? 'whatsapp'
+			: 'email';
+	}
+
+	/**
+	 * Récupère l'historique des derniers exports enregistrés (par canal et global).
+	 *
+	 * @return array Structure contenant les clés 'any', 'email', 'whatsapp'.
+	 */
+	public static function get_last_exports() {
+		$saved = get_option( self::OPTION_LAST_EXPORTS, array() );
+		if ( ! is_array( $saved ) ) {
+			$saved = array();
+		}
+
+		return array(
+			'any'      => isset( $saved['any'] ) && is_array( $saved['any'] ) ? $saved['any'] : null,
+			'email'    => isset( $saved['email'] ) && is_array( $saved['email'] ) ? $saved['email'] : null,
+			'whatsapp' => isset( $saved['whatsapp'] ) && is_array( $saved['whatsapp'] ) ? $saved['whatsapp'] : null,
+		);
+	}
+
+	/**
+	 * Enregistre les métadonnées d'un export comme nouveau point de repère.
+	 *
+	 * @param string $columns_mode    Mode de colonnes utilisé.
+	 * @param string $timestamp_local Date/heure locale WordPress (Y-m-d H:i:s).
+	 * @param string $timestamp_gmt   Date/heure GMT/UTC (Y-m-d H:i:s).
+	 * @param int    $count           Nombre de contacts exportés.
+	 * @param bool   $strict_new      Si le filtre strictement nouveaux était actif.
+	 * @return void
+	 */
+	public static function save_last_export_checkpoint( $columns_mode, $timestamp_local, $timestamp_gmt, $count, $strict_new = true ) {
+		$history      = self::get_last_exports();
+		$channel      = self::get_channel_for_mode( $columns_mode );
+		$current_user = function_exists( 'wp_get_current_user' ) ? wp_get_current_user() : null;
+		$user_login   = ( $current_user && ! empty( $current_user->user_login ) ) ? $current_user->user_login : '';
+
+		$entry = array(
+			'timestamp_local' => $timestamp_local,
+			'timestamp_gmt'   => $timestamp_gmt,
+			'count'           => (int) $count,
+			'columns_mode'    => $columns_mode,
+			'channel'         => $channel,
+			'strict_new'      => (bool) $strict_new,
+			'user_login'      => $user_login,
+		);
+
+		$history['any']      = $entry;
+		$history[ $channel ] = $entry;
+
+		update_option( self::OPTION_LAST_EXPORTS, $history, false );
+		update_option( 'woo_export_contacts_last_export', $timestamp_local, false );
+	}
+
+	/**
+	 * Définit ou réinitialise manuellement la date du dernier export.
+	 *
+	 * @param string      $target_channel 'all', 'email' ou 'whatsapp'.
+	 * @param string|null $datetime_local Date/heure locale 'Y-m-d H:i:s' ou null pour réinitialiser.
+	 * @return void
+	 */
+	public static function update_manual_checkpoint( $target_channel, $datetime_local = null ) {
+		$history = self::get_last_exports();
+
+		if ( empty( $datetime_local ) ) {
+			if ( 'email' === $target_channel ) {
+				$history['email'] = null;
+				$history['any']   = $history['whatsapp'];
+			} elseif ( 'whatsapp' === $target_channel ) {
+				$history['whatsapp'] = null;
+				$history['any']      = $history['email'];
+			} else {
+				$history = array(
+					'any'      => null,
+					'email'    => null,
+					'whatsapp' => null,
+				);
+			}
+			update_option( self::OPTION_LAST_EXPORTS, $history, false );
+			if ( empty( $history['any'] ) ) {
+				delete_option( 'woo_export_contacts_last_export' );
+			}
+			return;
+		}
+
+		$datetime_gmt = function_exists( 'get_gmt_from_date' ) ? get_gmt_from_date( $datetime_local ) : $datetime_local;
+		$current_user = function_exists( 'wp_get_current_user' ) ? wp_get_current_user() : null;
+		$user_login   = ( $current_user && ! empty( $current_user->user_login ) ) ? $current_user->user_login : '';
+
+		$entry = array(
+			'timestamp_local' => $datetime_local,
+			'timestamp_gmt'   => $datetime_gmt,
+			'count'           => -1, // Défini manuellement
+			'columns_mode'    => 'whatsapp' === $target_channel ? 'manychat_whatsapp' : 'emailit_ready',
+			'channel'         => 'whatsapp' === $target_channel ? 'whatsapp' : 'email',
+			'strict_new'      => true,
+			'user_login'      => $user_login,
+		);
+
+		if ( 'email' === $target_channel ) {
+			$history['email'] = $entry;
+			$history['any']   = $entry;
+		} elseif ( 'whatsapp' === $target_channel ) {
+			$history['whatsapp'] = $entry;
+			$history['any']      = $entry;
+		} else {
+			$history['email']    = array_merge( $entry, array( 'channel' => 'email', 'columns_mode' => 'emailit_ready' ) );
+			$history['whatsapp'] = array_merge( $entry, array( 'channel' => 'whatsapp', 'columns_mode' => 'manychat_whatsapp' ) );
+			$history['any']      = $history['email'];
+		}
+
+		update_option( self::OPTION_LAST_EXPORTS, $history, false );
+		update_option( 'woo_export_contacts_last_export', $datetime_local, false );
+	}
+
+	/**
 	 * Exécute le processus complet d'extraction, filtrage et streaming CSV.
 	 *
 	 * @param array $args Paramètres soumis par le formulaire d'export.
@@ -27,16 +156,23 @@ class Woo_Export_Contacts_Engine {
 
 		global $wpdb;
 
-		$is_all_time      = ( ! empty( $args['export_all_time'] ) && '1' === (string) $args['export_all_time'] ) || ( ! empty( $args['start_date'] ) && $args['start_date'] <= '2015-01-01' );
-		$start_date_raw   = ! empty( $args['start_date'] ) ? sanitize_text_field( $args['start_date'] ) : '';
-		$end_date_raw     = ! empty( $args['end_date'] ) ? sanitize_text_field( $args['end_date'] ) : '';
-		$strict_new       = ! $is_all_time && ! empty( $args['strict_new'] ) && '1' === (string) $args['strict_new'];
-		$raw_sources      = ! empty( $args['sources'] ) && is_array( $args['sources'] )
+		// Capture du timestamp exact de début d'extraction (évite tout trou temporel avec le prochain export)
+		$execution_local = function_exists( 'current_time' ) ? current_time( 'mysql' ) : gmdate( 'Y-m-d H:i:s' );
+		$execution_gmt   = function_exists( 'current_time' ) ? current_time( 'mysql', true ) : gmdate( 'Y-m-d H:i:s' );
+
+		$is_all_time     = ( ! empty( $args['export_all_time'] ) && '1' === (string) $args['export_all_time'] ) || ( ! empty( $args['start_date'] ) && $args['start_date'] <= '2015-01-01' );
+		$is_since_last   = ! $is_all_time && ! empty( $args['since_last_export'] ) && '1' === (string) $args['since_last_export'];
+		$save_checkpoint = ! isset( $args['save_last_export'] ) || '1' === (string) $args['save_last_export'];
+
+		$start_date_raw  = ! empty( $args['start_date'] ) ? sanitize_text_field( $args['start_date'] ) : '';
+		$end_date_raw    = ! empty( $args['end_date'] ) ? sanitize_text_field( $args['end_date'] ) : '';
+		$strict_new      = ! $is_all_time && ! empty( $args['strict_new'] ) && '1' === (string) $args['strict_new'];
+		$raw_sources     = ! empty( $args['sources'] ) && is_array( $args['sources'] )
 			? array_map( 'sanitize_text_field', $args['sources'] )
 			: array( 'orders', 'users' );
-		$delimiter_key    = ! empty( $args['csv_delimiter'] ) ? sanitize_text_field( $args['csv_delimiter'] ) : 'comma';
-		$columns_mode  = ! empty( $args['csv_columns'] ) ? sanitize_text_field( $args['csv_columns'] ) : 'emailit_ready';
-		$tag_prefix    = ! empty( $args['tag_prefix'] )
+		$delimiter_key   = ! empty( $args['csv_delimiter'] ) ? sanitize_text_field( $args['csv_delimiter'] ) : 'comma';
+		$columns_mode    = ! empty( $args['csv_columns'] ) ? sanitize_text_field( $args['csv_columns'] ) : 'emailit_ready';
+		$tag_prefix      = ! empty( $args['tag_prefix'] )
 			? sanitize_key( $args['tag_prefix'] )
 			: 'confo';
 
@@ -71,7 +207,36 @@ class Woo_Export_Contacts_Engine {
 		$end_datetime   = $end_date_raw . ' 23:59:59';
 		$start_gmt      = function_exists( 'get_gmt_from_date' ) ? get_gmt_from_date( $start_datetime ) : $start_datetime;
 		$end_gmt        = function_exists( 'get_gmt_from_date' ) ? get_gmt_from_date( $end_datetime ) : $end_datetime;
-		$delimiter      = ( 'semicolon' === $delimiter_key ) ? ';' : ',';
+
+		// Mode incrémental "Depuis le dernier export" : précision à la seconde près (+1s après le dernier export)
+		if ( $is_since_last ) {
+			$checkpoint_local = '';
+			if ( ! empty( $args['since_last_timestamp'] ) ) {
+				$candidate = sanitize_text_field( $args['since_last_timestamp'] );
+				if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $candidate ) ) {
+					$checkpoint_local = $candidate;
+				}
+			}
+
+			if ( empty( $checkpoint_local ) ) {
+				$last_exports = self::get_last_exports();
+				$channel      = self::get_channel_for_mode( $columns_mode );
+				if ( ! empty( $last_exports[ $channel ]['timestamp_local'] ) ) {
+					$checkpoint_local = $last_exports[ $channel ]['timestamp_local'];
+				} elseif ( ! empty( $last_exports['any']['timestamp_local'] ) ) {
+					$checkpoint_local = $last_exports['any']['timestamp_local'];
+				}
+			}
+
+			if ( ! empty( $checkpoint_local ) ) {
+				$next_second_ts = strtotime( $checkpoint_local ) + 1;
+				$start_datetime = gmdate( 'Y-m-d H:i:s', $next_second_ts );
+				$start_date_raw = substr( $checkpoint_local, 0, 10 );
+				$start_gmt      = function_exists( 'get_gmt_from_date' ) ? get_gmt_from_date( $start_datetime ) : $start_datetime;
+			}
+		}
+
+		$delimiter = ( 'semicolon' === $delimiter_key ) ? ';' : ',';
 
 		// Structure de collecte : [ 'email' => [ 'first_name', 'last_name', 'email', 'phone', 'source', 'tag', 'date' ] ]
 		$contacts = array();
@@ -108,8 +273,20 @@ class Woo_Export_Contacts_Engine {
 			self::filter_excluded_domains( $contacts, $excluded_domains );
 		}
 
-		// 5. Streaming du fichier CSV vers le navigateur
-		self::stream_csv( $contacts, $columns_mode, $delimiter, $start_date_raw, $end_date_raw, $strict_new, $is_all_time );
+		// 5. Streaming du fichier CSV vers le navigateur (et sauvegarde du point de repère)
+		self::stream_csv(
+			$contacts,
+			$columns_mode,
+			$delimiter,
+			$start_date_raw,
+			$end_date_raw,
+			$strict_new,
+			$is_all_time,
+			$is_since_last,
+			$save_checkpoint,
+			$execution_local,
+			$execution_gmt
+		);
 	}
 
 	/**
@@ -502,7 +679,60 @@ class Woo_Export_Contacts_Engine {
 	/**
 	 * Streaming direct du CSV vers la sortie HTTP.
 	 */
-	private static function stream_csv( $contacts, $columns_mode, $delimiter, $start_date_raw, $end_date_raw, $strict_new, $is_all_time = false ) {
+	private static function stream_csv(
+		$contacts,
+		$columns_mode,
+		$delimiter,
+		$start_date_raw,
+		$end_date_raw,
+		$strict_new,
+		$is_all_time = false,
+		$is_since_last = false,
+		$save_checkpoint = true,
+		$execution_local = '',
+		$execution_gmt = ''
+	) {
+		$is_manychat = in_array( $columns_mode, array( 'manychat_whatsapp', 'manychat_whatsapp_email' ), true );
+
+		// 1. Filtrage et dédoublonnage final avant comptage et envoi des en-têtes
+		if ( $is_manychat ) {
+			$deduped_by_phone = array();
+			foreach ( $contacts as $c ) {
+				$raw_phone = isset( $c['phone'] ) ? trim( $c['phone'] ) : '';
+				if ( empty( $raw_phone ) || ! Woo_Export_Contacts_Sanitizer::is_valid_phone( $raw_phone ) ) {
+					continue;
+				}
+				$clean_phone = Woo_Export_Contacts_Sanitizer::clean_phone( $raw_phone );
+				if ( isset( $deduped_by_phone[ $clean_phone ] ) ) {
+					// Conserver la donnée la plus récente si disponible
+					$existing_date = strtotime( $deduped_by_phone[ $clean_phone ]['date'] ?? '1970-01-01' );
+					$current_date  = strtotime( $c['date'] ?? '1970-01-01' );
+					if ( $current_date > $existing_date ) {
+						$deduped_by_phone[ $clean_phone ] = $c;
+					}
+				} else {
+					$deduped_by_phone[ $clean_phone ] = $c;
+				}
+			}
+			$contacts = $deduped_by_phone;
+		} else {
+			$valid_contacts = array();
+			foreach ( $contacts as $key => $c ) {
+				$email = isset( $c['email'] ) ? sanitize_email( strtolower( trim( $c['email'] ) ) ) : '';
+				if ( ! empty( $email ) && is_email( $email ) ) {
+					$valid_contacts[ $key ] = $c;
+				}
+			}
+			$contacts = $valid_contacts;
+		}
+
+		// 2. Enregistrement du point de repère "Dernier export" en base de données
+		if ( $save_checkpoint ) {
+			$ts_local = ! empty( $execution_local ) ? $execution_local : ( function_exists( 'current_time' ) ? current_time( 'mysql' ) : gmdate( 'Y-m-d H:i:s' ) );
+			$ts_gmt   = ! empty( $execution_gmt ) ? $execution_gmt : ( function_exists( 'current_time' ) ? current_time( 'mysql', true ) : gmdate( 'Y-m-d H:i:s' ) );
+			self::save_last_export_checkpoint( $columns_mode, $ts_local, $ts_gmt, count( $contacts ), $strict_new );
+		}
+
 		while ( ob_get_level() > 0 ) {
 			@ob_end_clean();
 		}
@@ -515,14 +745,22 @@ class Woo_Export_Contacts_Engine {
 		$filter_tag  = $strict_new ? 'nouveaux-strict' : 'tous-actifs';
 		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
 		$site_slug   = $site_host ? sanitize_file_name( preg_replace( '/^www\./', '', $site_host ) ) : 'contacts';
-		$is_manychat = in_array( $columns_mode, array( 'manychat_whatsapp', 'manychat_whatsapp_email' ), true );
-
 		$file_prefix = $is_manychat ? 'contacts-manychat-whatsapp' : 'contacts';
+
 		if ( $is_all_time ) {
 			$filename = sprintf(
 				'%s-%s-tout-historique-au-%s-%s.csv',
 				$file_prefix,
 				$site_slug,
+				sanitize_file_name( $end_date_raw ),
+				$filter_tag
+			);
+		} elseif ( $is_since_last ) {
+			$filename = sprintf(
+				'%s-%s-depuis-dernier-export-%s-au-%s-%s.csv',
+				$file_prefix,
+				$site_slug,
+				sanitize_file_name( $start_date_raw ),
 				sanitize_file_name( $end_date_raw ),
 				$filter_tag
 			);
@@ -548,30 +786,7 @@ class Woo_Export_Contacts_Engine {
 		// Émission du BOM UTF-8 (assure l'affichage direct des accents sans corruption dans Microsoft Excel)
 		fputs( $output, "\xEF\xBB\xBF" );
 
-		// 1. Pour les modes ManyChat WhatsApp : filtrage strict des téléphones valides et dédoublonnage par numéro
-		if ( $is_manychat ) {
-			$deduped_by_phone = array();
-			foreach ( $contacts as $c ) {
-				$raw_phone = isset( $c['phone'] ) ? trim( $c['phone'] ) : '';
-				if ( empty( $raw_phone ) || ! Woo_Export_Contacts_Sanitizer::is_valid_phone( $raw_phone ) ) {
-					continue;
-				}
-				$clean_phone = Woo_Export_Contacts_Sanitizer::clean_phone( $raw_phone );
-				if ( isset( $deduped_by_phone[ $clean_phone ] ) ) {
-					// Conserver la donnée la plus récente si disponible
-					$existing_date = strtotime( $deduped_by_phone[ $clean_phone ]['date'] ?? '1970-01-01' );
-					$current_date  = strtotime( $c['date'] ?? '1970-01-01' );
-					if ( $current_date > $existing_date ) {
-						$deduped_by_phone[ $clean_phone ] = $c;
-					}
-				} else {
-					$deduped_by_phone[ $clean_phone ] = $c;
-				}
-			}
-			$contacts = $deduped_by_phone;
-		}
-
-		// 2. Ligne d'en-tête CSV selon le mode choisi
+		// 3. Ligne d'en-tête CSV selon le mode choisi
 		if ( 'emailit_ready' === $columns_mode ) {
 			// Format standardisé 100% prêt à mapper pour Emailit, Klaviyo ou Brevo
 			fputcsv( $output, array( 'email', 'first_name', 'last_name', 'phone', 'tags' ), $delimiter );
@@ -587,20 +802,10 @@ class Woo_Export_Contacts_Engine {
 			fputcsv( $output, array( 'Prénom', 'Nom', 'Email', 'Téléphone', 'Source', 'Tag Emailit', 'Date d\'activité' ), $delimiter );
 		}
 
-		// 3. Écriture ligne par ligne avec protection anti-injection CSV
+		// 4. Écriture ligne par ligne avec protection anti-injection CSV
 		foreach ( $contacts as $c ) {
 			$email = isset( $c['email'] ) ? sanitize_email( strtolower( trim( $c['email'] ) ) ) : '';
 			$phone = isset( $c['phone'] ) ? trim( $c['phone'] ) : '';
-
-			if ( ! $is_manychat ) {
-				if ( empty( $email ) || ! is_email( $email ) ) {
-					continue;
-				}
-			} else {
-				if ( empty( $phone ) || ! Woo_Export_Contacts_Sanitizer::is_valid_phone( $phone ) ) {
-					continue;
-				}
-			}
 
 			$first_name     = isset( $c['first_name'] ) ? trim( $c['first_name'] ) : '';
 			$last_name      = isset( $c['last_name'] ) ? trim( $c['last_name'] ) : '';
