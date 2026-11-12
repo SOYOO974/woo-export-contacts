@@ -11,6 +11,7 @@ Développée et maintenue par **SOYOO** pour Conforama.re et les sites e-commerc
 1. **Multi-Sources de Capture** :
    - 🛍️ **Commandes WooCommerce** : Compatible nativement avec le nouveau stockage de commandes haute performance **HPOS** (`wc_orders` et `wc_order_addresses`) ainsi qu'avec le stockage de métadonnées classique (`wp_posts` / `wp_postmeta`).
    - 👤 **Comptes WordPress** : Nouveaux utilisateurs enregistrés (`wp_users` et `wp_usermeta`).
+   - ✉️ **Inscrits Newsletter (Natif)** : Collecte directe via la table propriétaire `wec_newsletter_subscribers` (case opt-in Checkout WooCommerce, shortcode AJAX `[woo_newsletter_form]` compatible cache Cloudflare / WP Rocket, et API publique `woo_export_contacts_subscribe_newsletter` connectée aux programmes de fidélité).
    - 🛒 **Paniers Abandonnés** : Capture en temps réel depuis les tables d'abandon de panier (CartFlows / modules internes).
    - 📩 **Newsletter MailPoet** : Extraction des abonnés actifs confirmés (`mailpoet_subscribers`).
    - 🔔 **Alertes Rupture / Waitlist** : Intégration des demandes de réassort Back In Stock Notifier.

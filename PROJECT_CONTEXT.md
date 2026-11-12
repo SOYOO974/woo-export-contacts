@@ -52,3 +52,9 @@
    - Mode incrémental à la seconde près (`+1s` après le dernier export) éliminant tout risque de trou ou de doublon même en cas de multiples exports dans la même journée.
    - Bouton 1-clic dans le bandeau supérieur et raccourci rapide dans les périodes, complétés par un tiroir d'édition/réinitialisation manuelle du point de repère et une protection automatique contre l'écrasement lors des exports de périodes passées.
 
+8. **Module Natif d'Opt-in Newsletter, Shortcode AJAX & Pont Fidélité (v2.5.0)** :
+   - Table SQL dédiée `{$wpdb->prefix}wec_newsletter_subscribers` (`id`, `email` UNIQUE lowercase, `first_name`, `last_name`, `source`, `status` [`subscribed`|`unsubscribed`], `ip_hash`, `subscribed_at`, `updated_at`), installée automatiquement via `woo_export_contacts_db_version`.
+   - API globale publique pour les thèmes SOYOO (ex. `_cpd` Le Comptoir de Cambaie) : `woo_export_contacts_is_subscribed( string $email ): bool` (vérifie `wec_newsletter_subscribers` + repli actif MailPoet) et `woo_export_contacts_subscribe_newsletter( string $email, array $context = array() ): bool` (idempotente, émettant `do_action( 'woo_export_contacts_newsletter_subscribed', $normalized_email, $context )` uniquement lors d'une première inscription ou ré-inscription).
+   - Option d'administration pour activer une case d'opt-in Newsletter au Checkout WooCommerce (conforme CNIL, compatible HPOS) + shortcode universel `[woo_newsletter_form]` léger en AJAX (compatible cache Cloudflare Enterprise / WP Rocket, protégé par Honeypot + jeton JS + rate-limit par IP hachée).
+   - Source `newsletter_subscribers` (`Inscrits Newsletter (Natif)`) cochée par défaut dans l'interface d'export et fusionnée/dédoublonnée dans `Woo_Export_Contacts_Engine`.
+

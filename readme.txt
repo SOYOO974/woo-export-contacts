@@ -4,17 +4,19 @@ Tags: woocommerce, export, contacts, emailit, klaviyo, csv, hpos
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.0
+Stable tag: 2.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Exportation CSV ultra-propre, dédoublonnée et performante des contacts marketing WooCommerce (HPOS, Comptes, Paniers abandonnés, MailPoet). Optimisé pour ManyChat WhatsApp et Emailit.
+Exportation CSV ultra-propre, dédoublonnée et performante des contacts marketing WooCommerce (HPOS, Comptes, Newsletter native & MailPoet, Paniers abandonnés) + module léger d'opt-in newsletter (Checkout, Shortcode AJAX & hook fidélité). Optimisé pour ManyChat WhatsApp et Emailit.
 
 == Description ==
 
-Woo Export Contacts est une extension conçue pour exporter facilement et rapidement vos contacts clients et prospects au format CSV prêt pour ManyChat (WhatsApp), Emailit, Klaviyo ou Brevo.
+Woo Export Contacts est une extension conçue pour collecter proprement vos opt-ins newsletter et exporter facilement vos contacts clients et prospects au format CSV prêt pour ManyChat (WhatsApp), Emailit, Klaviyo ou Brevo.
 
 = Fonctionnalités =
+* Module natif d'inscription Newsletter léger (`wec_newsletter_subscribers`) avec API publique idempotente (`woo_export_contacts_is_subscribed`, `woo_export_contacts_subscribe_newsletter`) et hook standardisé `woo_export_contacts_newsletter_subscribed` (programmes de fidélité, missions +50 pts).
+* Case d'opt-in Newsletter optionnelle au Checkout WooCommerce (conforme CNIL, non pré-cochée, masquée si déjà inscrit) et shortcode AJAX `[woo_newsletter_form]` compatible cache Cloudflare / WP Rocket sans dépendance externe.
 * Prise en charge native de WooCommerce HPOS (High-Performance Order Storage).
 * Profil d'export ManyChat WhatsApp sans e-mail (Phone, First Name, Last Name, Tags) contournant le blocage "Request approval".
 * Filtrage strict et dédoublonnage par numéro de téléphone mobile au format international E.164 (+262 Réunion/Mayotte, +33 Métropole).
@@ -32,6 +34,14 @@ Woo Export Contacts est une extension conçue pour exporter facilement et rapide
 3. Rendez-vous dans WooCommerce > Export Contacts.
 
 == Changelog ==
+
+= 2.5.0 =
+* Nouveau module natif de collecte d'opt-in Newsletter (`includes/class-woo-export-contacts-newsletter.php`) avec table SQL dédiée `{$wpdb->prefix}wec_newsletter_subscribers` auto-installée par version de schéma DB.
+* Exposition des fonctions globales publiques `woo_export_contacts_is_subscribed( $email )` (vérification table native + repli MailPoet) et `woo_export_contacts_subscribe_newsletter( $email, $context )` (enregistrement idempotent sans doublon SQL).
+* Émission garantie une seule fois du hook WordPress standardisé `do_action( 'woo_export_contacts_newsletter_subscribed', $normalized_email, $context )` lors d'une première inscription ou ré-inscription (pont natif pour les programmes de fidélité clients SOYOO).
+* Ajout d'une option d'administration pour afficher une case d'opt-in Newsletter conforme CNIL sur le Checkout WooCommerce (compatible HPOS, masquée si le client connecté est déjà abonné).
+* Ajout du shortcode universel `[woo_newsletter_form]` en AJAX léger sans dépendance externe, compatible Edge Cache Cloudflare / WP Rocket (anti-spam Honeypot + contrôle JS + limitation de débit par IP hachée SHA-256).
+* Intégration de la source `Inscrits Newsletter (Natif)` cochée par défaut dans le moteur de fusion et de dédoublonnage CSV (`Woo_Export_Contacts_Engine`).
 
 = 2.4.0 =
 * Suivi intelligent du dernier export par canal (Emailit / CRM et ManyChat WhatsApp séparés) avec enregistrement automatique de la date, de l'heure à la seconde près et du nombre de contacts exportés.

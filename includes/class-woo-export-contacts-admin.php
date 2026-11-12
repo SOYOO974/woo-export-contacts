@@ -24,6 +24,7 @@ class Woo_Export_Contacts_Admin {
 		add_action( 'admin_post_conforama_export_contacts_csv', array( $this, 'handle_export_submission' ), 1 );
 		add_action( 'admin_post_woo_export_contacts_csv', array( $this, 'handle_export_submission' ), 1 );
 		add_action( 'admin_post_woo_export_contacts_update_checkpoint', array( $this, 'handle_checkpoint_update' ), 1 );
+		add_action( 'admin_post_woo_export_contacts_save_newsletter_settings', array( $this, 'handle_newsletter_settings_save' ), 1 );
 		add_action( 'admin_init', array( $this, 'maybe_suppress_admin_notices_early' ) );
 	}
 
@@ -237,6 +238,26 @@ class Woo_Export_Contacts_Admin {
 	}
 
 	/**
+	 * Sauvegarde les réglages du module natif d'inscription à la newsletter (Checkout opt-in).
+	 */
+	public function handle_newsletter_settings_save() {
+		if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Action non autorisée : permissions insuffisantes.', 'woo-export-contacts' ) );
+		}
+
+		if ( ! isset( $_POST['woo_export_contacts_newsletter_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['woo_export_contacts_newsletter_nonce'] ) ), 'woo_export_contacts_newsletter_action' ) ) {
+			wp_die( esc_html__( 'Échec de la validation de sécurité CSRF. Veuillez rafraîchir la page et réessayer.', 'woo-export-contacts' ) );
+		}
+
+		if ( class_exists( 'Woo_Export_Contacts_Newsletter' ) ) {
+			Woo_Export_Contacts_Newsletter::save_settings( wp_unslash( $_POST ) );
+		}
+
+		wp_safe_redirect( admin_url( 'admin.php?page=conforama-export-contacts&newsletter_saved=1#wec-newsletter-settings-card' ) );
+		exit;
+	}
+
+	/**
 	 * Formate une entrée de dernier export pour l'affichage dans l'interface.
 	 *
 	 * @param array|null $entry Entrée d'historique d'export.
@@ -310,6 +331,18 @@ class Woo_Export_Contacts_Admin {
 		$table_waitlist = $wpdb->prefix . 'cwginstocknotifier';
 		$has_waitlist   = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_waitlist ) ) === $table_waitlist;
 
+		$nl_settings     = class_exists( 'Woo_Export_Contacts_Newsletter' )
+			? Woo_Export_Contacts_Newsletter::get_settings()
+			: array(
+				'enable_checkout_optin' => false,
+				'checkout_label'        => 'Recevoir nos offres exclusives et nouveautés par e-mail (désinscription en 1 clic)',
+			);
+		$nl_active_count = class_exists( 'Woo_Export_Contacts_Newsletter' )
+			? Woo_Export_Contacts_Newsletter::get_active_subscribers_count()
+			: 0;
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$nl_saved_flag   = isset( $_GET['newsletter_saved'] ) && '1' === sanitize_text_field( wp_unslash( $_GET['newsletter_saved'] ) );
+
 		$hpos_enabled = class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' )
 			&& \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
 
@@ -341,6 +374,16 @@ class Woo_Export_Contacts_Admin {
 				$earliest_date = $first_order_ymd;
 			}
 		}
+		if ( $nl_active_count > 0 && class_exists( 'Woo_Export_Contacts_Newsletter' ) ) {
+			$nl_table      = Woo_Export_Contacts_Newsletter::get_table_name();
+			$first_nl_date = $wpdb->get_var( "SELECT MIN(subscribed_at) FROM {$nl_table} WHERE subscribed_at != '0000-00-00 00:00:00'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( ! empty( $first_nl_date ) ) {
+				$first_nl_ymd = gmdate( 'Y-m-d', strtotime( $first_nl_date ) );
+				if ( $first_nl_ymd < $earliest_date && $first_nl_ymd > '2000-01-01' ) {
+					$earliest_date = $first_nl_ymd;
+				}
+			}
+		}
 
 		// Préfixe de tag par défaut
 		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
@@ -367,7 +410,7 @@ class Woo_Export_Contacts_Admin {
 			$excluded_domains_val = implode( "\n", $default_domains );
 		}
 
-		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.4.0';
+		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.5.0';
 		$badge_text      = $is_confo ? 'Conforama.re &bull; v' . $version_display : esc_html( get_bloginfo( 'name' ) ) . ' &bull; v' . $version_display;
 		?>
 		<div class="wrap woo-export-contacts-wrap" style="max-width: 980px; margin-top: 25px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
@@ -633,6 +676,15 @@ class Woo_Export_Contacts_Admin {
 									<input type="checkbox" name="sources[]" value="users" checked>
 									<span>Comptes clients WordPress créés</span>
 								</label>
+								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+									<input type="checkbox" name="sources[]" value="newsletter_subscribers" checked>
+									<span>
+										Inscrits Newsletter (Natif)
+										<span style="display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4;">
+											<?php echo (int) $nl_active_count; ?> <?php echo 1 === (int) $nl_active_count ? 'actif' : 'actifs'; ?>
+										</span>
+									</span>
+								</label>
 								<?php if ( $has_cartflows ) : ?>
 								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 									<input type="checkbox" name="sources[]" value="abandoned_carts" checked>
@@ -735,6 +787,88 @@ class Woo_Export_Contacts_Admin {
 						</div>
 					</div>
 				</form>
+			</div>
+
+			<!-- MODULE DE COLLECTE OPT-IN NEWSLETTER NATIF (CHECKOUT, SHORTCODE AJAX & FIDELITE) -->
+			<div id="wec-newsletter-settings-card" style="background: #ffffff; border: 1px solid #dcdcde; border-radius: 8px; padding: 26px 28px; margin-top: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+				<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 14px; margin-bottom: 20px;">
+					<div>
+						<h2 style="margin: 0 0 4px 0; font-size: 17px; font-weight: 800; color: #111827; display: flex; align-items: center; gap: 8px;">
+							<span class="dashicons dashicons-yes-alt" style="color: #0f766e; font-size: 22px; width: 22px; height: 22px;"></span>
+							Collecte Opt-in Newsletter Native (Checkout, Shortcode AJAX &amp; Fidélité)
+						</h2>
+						<p style="margin: 0; font-size: 13px; color: #64748b;">
+							Enregistre les inscrits dans la table dédiée <code><?php echo esc_html( $wpdb->prefix . 'wec_newsletter_subscribers' ); ?></code>, fusionnés et dédoublonnés automatiquement lors de vos exports CSV.
+						</p>
+					</div>
+					<div style="background: #f0fdfa; border: 1px solid #99f6e4; color: #0f766e; font-weight: 700; font-size: 12px; padding: 6px 12px; border-radius: 6px;">
+						<?php echo (int) $nl_active_count; ?> <?php echo 1 === (int) $nl_active_count ? 'inscrit actif' : 'inscrits actifs'; ?>
+					</div>
+				</div>
+
+				<?php if ( $nl_saved_flag ) : ?>
+					<div class="wec-saved-banner" style="background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; padding: 10px 14px; border-radius: 6px; margin-bottom: 18px; font-size: 13px; font-weight: 600;">
+						Les réglages de collecte Newsletter ont bien été enregistrés.
+					</div>
+				<?php endif; ?>
+
+				<div style="display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; align-items: start;">
+					<!-- Formulaire d'activation Checkout Opt-in -->
+					<form method="POST" action="<?php echo esc_url( $action_url ); ?>" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 18px;">
+						<?php wp_nonce_field( 'woo_export_contacts_newsletter_action', 'woo_export_contacts_newsletter_nonce' ); ?>
+						<input type="hidden" name="action" value="woo_export_contacts_save_newsletter_settings">
+
+						<div style="margin-bottom: 14px;">
+							<label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+								<input type="checkbox" name="enable_checkout_optin" value="1" <?php checked( ! empty( $nl_settings['enable_checkout_optin'] ) ); ?> style="margin-top: 3px;">
+								<span>
+									<strong style="color: #0f172a; font-size: 13.5px;">Afficher la case d'inscription Newsletter sur la page Checkout WooCommerce</strong><br>
+									<small style="color: #64748b; font-size: 12px;">Conforme CNIL (non pré-cochée par défaut, masquée automatiquement si le client connecté est déjà inscrit).</small>
+								</span>
+							</label>
+						</div>
+
+						<div style="margin-bottom: 16px;">
+							<label for="wec_checkout_label" style="display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 5px;">
+								Libellé de la case à cocher au Checkout :
+							</label>
+							<input
+								type="text"
+								id="wec_checkout_label"
+								name="checkout_label"
+								value="<?php echo esc_attr( $nl_settings['checkout_label'] ); ?>"
+								style="width: 100%; padding: 7px 10px; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 13px;"
+							/>
+						</div>
+
+						<button type="submit" class="button button-secondary" style="font-weight: 600;">
+							Enregistrer les réglages Newsletter
+						</button>
+					</form>
+
+					<!-- Aide Shortcode & Pont Programme de Fidélité -->
+					<div style="display: flex; flex-direction: column; gap: 12px;">
+						<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 16px;">
+							<div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #334155; margin-bottom: 6px;">
+								Shortcode Formulaire AJAX (Pied de page / Landing)
+							</div>
+							<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+								<code id="wec-shortcode-snippet" style="flex: 1; padding: 6px 10px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; color: #0f172a;">[woo_newsletter_form source="footer"]</code>
+								<button type="button" id="wec-copy-shortcode-btn" class="button button-small" style="white-space: nowrap;">Copier</button>
+							</div>
+							<small style="color: #64748b; font-size: 11.5px; line-height: 1.45; display: block;">
+								Compatible cache Cloudflare / WP Rocket, sans dépendance externe. Options : <code>placeholder</code>, <code>button_text</code>, <code>show_firstname="yes"</code>, <code>layout="stacked"</code>.
+							</small>
+						</div>
+
+						<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; font-size: 11.5px; color: #475569; line-height: 1.5;">
+							<strong style="color: #0f172a;">API Thèmes &amp; Programme de Fidélité :</strong><br>
+							&bull; <code>woo_export_contacts_is_subscribed( $email )</code><br>
+							&bull; <code>woo_export_contacts_subscribe_newsletter( $email, $context )</code><br>
+							&bull; Hook émis (1x) : <code>woo_export_contacts_newsletter_subscribed</code>
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 
@@ -950,6 +1084,20 @@ class Woo_Export_Contacts_Admin {
 				var textarea = document.getElementById('excluded_domains');
 				if (textarea) {
 					textarea.value = defaultExcludedDomains;
+				}
+			});
+		}
+
+		var copyShortcodeBtn = document.getElementById('wec-copy-shortcode-btn');
+		var shortcodeSnippet = document.getElementById('wec-shortcode-snippet');
+		if (copyShortcodeBtn && shortcodeSnippet) {
+			copyShortcodeBtn.addEventListener('click', function() {
+				var text = shortcodeSnippet.textContent || '[woo_newsletter_form]';
+				if (navigator.clipboard && navigator.clipboard.writeText) {
+					navigator.clipboard.writeText(text).then(function() {
+						copyShortcodeBtn.textContent = 'Copié';
+						setTimeout(function() { copyShortcodeBtn.textContent = 'Copier'; }, 1800);
+					});
 				}
 			});
 		}

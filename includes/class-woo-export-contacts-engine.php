@@ -169,7 +169,7 @@ class Woo_Export_Contacts_Engine {
 		$strict_new      = ! $is_all_time && ! empty( $args['strict_new'] ) && '1' === (string) $args['strict_new'];
 		$raw_sources     = ! empty( $args['sources'] ) && is_array( $args['sources'] )
 			? array_map( 'sanitize_text_field', $args['sources'] )
-			: array( 'orders', 'users' );
+			: array( 'orders', 'users', 'newsletter_subscribers' );
 		$delimiter_key   = ! empty( $args['csv_delimiter'] ) ? sanitize_text_field( $args['csv_delimiter'] ) : 'comma';
 		$columns_mode    = ! empty( $args['csv_columns'] ) ? sanitize_text_field( $args['csv_columns'] ) : 'emailit_ready';
 		$tag_prefix      = ! empty( $args['tag_prefix'] )
@@ -254,6 +254,10 @@ class Woo_Export_Contacts_Engine {
 			self::collect_abandoned_carts( $start_datetime, $end_datetime, $tag_prefix, $contacts );
 		}
 
+		if ( in_array( 'newsletter_subscribers', $raw_sources, true ) ) {
+			self::collect_newsletter_subscribers( $start_datetime, $end_datetime, $tag_prefix, $contacts );
+		}
+
 		if ( in_array( 'mailpoet', $raw_sources, true ) ) {
 			self::collect_mailpoet( $start_datetime, $end_datetime, $tag_prefix, $contacts );
 		}
@@ -271,6 +275,10 @@ class Woo_Export_Contacts_Engine {
 		$skip_exclusion = isset( $args['exclude_internal'] ) && ( '0' === (string) $args['exclude_internal'] || false === $args['exclude_internal'] );
 		if ( ! $skip_exclusion && ! empty( $excluded_domains ) && ! empty( $contacts ) ) {
 			self::filter_excluded_domains( $contacts, $excluded_domains );
+		}
+
+		if ( ! empty( $args['return_contacts_only'] ) ) {
+			return $contacts;
 		}
 
 		// 5. Streaming du fichier CSV vers le navigateur (et sauvegarde du point de repère)
@@ -479,7 +487,68 @@ class Woo_Export_Contacts_Engine {
 	}
 
 	/**
-	 * Source 4 : Abonnés Newsletter MailPoet.
+	 * Source 4 : Inscrits Newsletter Natifs (`wec_newsletter_subscribers`).
+	 */
+	private static function collect_newsletter_subscribers( $start_local, $end_local, $tag_prefix, &$contacts ) {
+		global $wpdb;
+
+		$nl_table = class_exists( 'Woo_Export_Contacts_Newsletter' )
+			? Woo_Export_Contacts_Newsletter::get_table_name()
+			: $wpdb->prefix . 'wec_newsletter_subscribers';
+
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $nl_table ) ) !== $nl_table ) {
+			return;
+		}
+
+		$nl_sql = $wpdb->prepare(
+			"SELECT email, first_name, last_name, source, subscribed_at
+			 FROM {$nl_table}
+			 WHERE status = 'subscribed'
+			   AND email IS NOT NULL AND email != ''
+			   AND subscribed_at >= %s AND subscribed_at <= %s
+			 ORDER BY subscribed_at ASC",
+			$start_local,
+			$end_local
+		);
+
+		$subscribers = $wpdb->get_results( $nl_sql );
+		if ( empty( $subscribers ) ) {
+			return;
+		}
+
+		foreach ( $subscribers as $sub ) {
+			$email = Woo_Export_Contacts_Sanitizer::clean_email( $sub->email );
+			if ( ! $email ) {
+				continue;
+			}
+
+			$clean_fn = Woo_Export_Contacts_Sanitizer::clean_name( $sub->first_name );
+			$clean_ln = Woo_Export_Contacts_Sanitizer::clean_name( $sub->last_name );
+
+			if ( ! isset( $contacts[ $email ] ) ) {
+				$contacts[ $email ] = array(
+					'first_name' => $clean_fn,
+					'last_name'  => $clean_ln,
+					'email'      => $email,
+					'phone'      => '',
+					'source'     => 'Inscrits Newsletter (Natif)',
+					'tag'        => $tag_prefix . '_newsletter',
+					'date'       => $sub->subscribed_at,
+				);
+			} else {
+				// Enrichissement non destructif des noms s'ils manquaient dans la source précédente
+				if ( empty( $contacts[ $email ]['first_name'] ) && '' !== $clean_fn ) {
+					$contacts[ $email ]['first_name'] = $clean_fn;
+				}
+				if ( empty( $contacts[ $email ]['last_name'] ) && '' !== $clean_ln ) {
+					$contacts[ $email ]['last_name'] = $clean_ln;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Source 5 : Abonnés Newsletter MailPoet.
 	 */
 	private static function collect_mailpoet( $start_local, $end_local, $tag_prefix, &$contacts ) {
 		global $wpdb;
@@ -526,7 +595,7 @@ class Woo_Export_Contacts_Engine {
 	}
 
 	/**
-	 * Source 5 : Alertes Rupture / Waitlist (Back In Stock Notifier CWG).
+	 * Source 6 : Alertes Rupture / Waitlist (Back In Stock Notifier CWG).
 	 */
 	private static function collect_waitlist( $start_local, $end_local, $tag_prefix, &$contacts ) {
 		global $wpdb;

@@ -25,6 +25,7 @@ Dès qu'une modification, correction de bug ou amélioration est apportée à ce
      php -l woo-export-contacts.php
      php -l includes/class-woo-export-contacts-admin.php
      php -l includes/class-woo-export-contacts-engine.php
+     php -l includes/class-woo-export-contacts-newsletter.php
      php -l includes/class-woo-export-contacts-sanitizer.php
      ```
 
@@ -55,7 +56,8 @@ Dès qu'une modification, correction de bug ou amélioration est apportée à ce
 
 ## 🧱 ARCHITECTURE DU PLUGIN
 
-- [`woo-export-contacts.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/woo-export-contacts.php) : Point d'entrée, déclaration de compatibilité HPOS (`before_woocommerce_init`), chargement de `plugin-update-checker` (v5) configuré pour surveiller les release assets GitHub.
-- [`includes/class-woo-export-contacts-admin.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/includes/class-woo-export-contacts-admin.php) : Page d'administration sous WooCommerce, gestion des nonces CSRF, boutons de filtres dates rapides, configuration des colonnes CSV, champ éditable des domaines e-mails exclus et persistance en base (`wp_options` : `woo_export_contacts_excluded_domains`).
-- [`includes/class-woo-export-contacts-engine.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/includes/class-woo-export-contacts-engine.php) : Moteur d'extraction SQL haute performance (commandes HPOS `wc_orders`/legacy, comptes `wp_users`, paniers abandonnés CartFlows, abonnés MailPoet, alertes rupture), filtrage "Strictement Nouveaux Contacts" et streaming direct CSV (`php://output`) avec BOM UTF-8.
+- [`woo-export-contacts.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/woo-export-contacts.php) : Point d'entrée, déclaration de compatibilité HPOS (`before_woocommerce_init`), chargement de `plugin-update-checker` (v5) configuré pour surveiller les release assets GitHub, et fonctions globales publiques (`woo_export_contacts_is_subscribed`, `woo_export_contacts_subscribe_newsletter`).
+- [`includes/class-woo-export-contacts-newsletter.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/includes/class-woo-export-contacts-newsletter.php) : Module léger de collecte opt-in newsletter, table SQL dédiée `{$wpdb->prefix}wec_newsletter_subscribers` auto-installée par version DB, émission idempotente du hook `woo_export_contacts_newsletter_subscribed`, case opt-in Checkout WooCommerce optionnelle et shortcode AJAX `[woo_newsletter_form]` compatible Edge Cache.
+- [`includes/class-woo-export-contacts-admin.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/includes/class-woo-export-contacts-admin.php) : Page d'administration sous WooCommerce, gestion des nonces CSRF, boutons de filtres dates rapides, configuration des colonnes CSV, réglages de collecte Newsletter native, champ éditable des domaines e-mails exclus et persistance en base (`wp_options` : `woo_export_contacts_excluded_domains`).
+- [`includes/class-woo-export-contacts-engine.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/includes/class-woo-export-contacts-engine.php) : Moteur d'extraction SQL haute performance (commandes HPOS `wc_orders`/legacy, comptes `wp_users`, inscrits newsletter natifs `wec_newsletter_subscribers`, paniers abandonnés CartFlows, abonnés MailPoet, alertes rupture), filtrage "Strictement Nouveaux Contacts" et streaming direct CSV (`php://output`) avec BOM UTF-8.
 - [`includes/class-woo-export-contacts-sanitizer.php`](file:///C:/Antigravity/woo-plugins/woo-export-contacts/includes/class-woo-export-contacts-sanitizer.php) : Nettoyage et normalisation des données (Title Case pour noms/prénoms, format international E.164 +262/+33 pour téléphones, neutralisation des formules anti-injection DDE Excel, extraction et vérification étanche des domaines e-mails exclus).
