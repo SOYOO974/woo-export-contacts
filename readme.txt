@@ -4,7 +4,7 @@ Tags: woocommerce, export, contacts, emailit, klaviyo, csv, hpos
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.5.0
+Stable tag: 2.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -34,6 +34,12 @@ Woo Export Contacts est une extension conçue pour collecter proprement vos opt-
 3. Rendez-vous dans WooCommerce > Export Contacts.
 
 == Changelog ==
+
+= 2.6.0 =
+* Ajout de 3 filtres WordPress d'extensibilité (`woo_export_contacts_extra_sources`, `woo_export_contacts_collect_extra_contacts`, `woo_export_contacts_filter_strictly_new`) permettant de brancher des sources de contacts externes (ex. factures magasin ERP déchiffrées à la volée) sans couplage métier.
+* Affichage dynamique des sources externes dans l'interface d'administration (case à cocher, pilule de compteur et prise en compte de `earliest_date` sur le raccourci "Tout l'historique") et inclusion automatique des sources `default_checked` par défaut.
+* Prise en charge native des contacts mobile-seul sans adresse e-mail (`phone:+262...` avec `email` vide) pour les exports ManyChat WhatsApp et le mode Audit complet, avec fusion non destructive lors du dédoublonnage téléphonique.
+* Sécurisation de `filter_excluded_domains()` et `filter_strictly_new()` face aux clés non-email, et vérification des numéros de téléphone antérieurs dans les commandes WooCommerce (HPOS `wc_order_addresses` et Legacy `_billing_phone`, normalisés E.164 via `clean_phone`) afin d'exclure les contacts mobile-seul déjà clients web avant la période.
 
 = 2.5.0 =
 * Nouveau module natif de collecte d'opt-in Newsletter (`includes/class-woo-export-contacts-newsletter.php`) avec table SQL dédiée `{$wpdb->prefix}wec_newsletter_subscribers` auto-installée par version de schéma DB.

@@ -167,9 +167,20 @@ class Woo_Export_Contacts_Engine {
 		$start_date_raw  = ! empty( $args['start_date'] ) ? sanitize_text_field( $args['start_date'] ) : '';
 		$end_date_raw    = ! empty( $args['end_date'] ) ? sanitize_text_field( $args['end_date'] ) : '';
 		$strict_new      = ! $is_all_time && ! empty( $args['strict_new'] ) && '1' === (string) $args['strict_new'];
-		$raw_sources     = ! empty( $args['sources'] ) && is_array( $args['sources'] )
-			? array_map( 'sanitize_text_field', $args['sources'] )
-			: array( 'orders', 'users', 'newsletter_subscribers' );
+		if ( ! empty( $args['sources'] ) && is_array( $args['sources'] ) ) {
+			$raw_sources = array_map( 'sanitize_text_field', $args['sources'] );
+		} else {
+			$raw_sources   = array( 'orders', 'users', 'newsletter_subscribers' );
+			$extra_sources = apply_filters( 'woo_export_contacts_extra_sources', array() );
+			if ( is_array( $extra_sources ) ) {
+				foreach ( $extra_sources as $src_key => $src_meta ) {
+					if ( is_string( $src_key ) && '' !== $src_key && is_array( $src_meta ) && ! empty( $src_meta['default_checked'] ) ) {
+						$raw_sources[] = sanitize_text_field( $src_key );
+					}
+				}
+			}
+			$raw_sources = array_values( array_unique( $raw_sources ) );
+		}
 		$delimiter_key   = ! empty( $args['csv_delimiter'] ) ? sanitize_text_field( $args['csv_delimiter'] ) : 'comma';
 		$columns_mode    = ! empty( $args['csv_columns'] ) ? sanitize_text_field( $args['csv_columns'] ) : 'emailit_ready';
 		$tag_prefix      = ! empty( $args['tag_prefix'] )
@@ -264,6 +275,27 @@ class Woo_Export_Contacts_Engine {
 
 		if ( in_array( 'waitlist', $raw_sources, true ) ) {
 			self::collect_waitlist( $start_datetime, $end_datetime, $tag_prefix, $contacts );
+		}
+
+		// Collecte additionnelle via sources externes (ex. ventes magasin ERP déchiffrées à la volée)
+		$contacts = apply_filters(
+			'woo_export_contacts_collect_extra_contacts',
+			$contacts,
+			$raw_sources,
+			array(
+				'start_gmt'     => $start_gmt,
+				'end_gmt'       => $end_gmt,
+				'start_local'   => $start_datetime,
+				'end_local'     => $end_datetime,
+				'is_all_time'   => $is_all_time,
+				'is_since_last' => $is_since_last,
+				'strict_new'    => $strict_new,
+				'columns_mode'  => $columns_mode,
+				'tag_prefix'    => $tag_prefix,
+			)
+		);
+		if ( ! is_array( $contacts ) ) {
+			$contacts = array();
 		}
 
 		// 3. Filtrage "Strictement Nouveaux Contacts" (exclut quiconque a déjà commandé ou créé un compte avant)
@@ -641,75 +673,156 @@ class Woo_Export_Contacts_Engine {
 	}
 
 	/**
-	 * Filtre strictement nouveaux : supprime tout email ayant déjà commandé ou créé un compte avant la date de début.
+	 * Filtre strictement nouveaux : supprime tout contact ayant déjà commandé ou créé un compte avant la date de début
+	 * (par e-mail, par téléphone mobile sur les contacts sans e-mail, et via le filtre d'extension externe).
 	 */
 	private static function filter_strictly_new( &$contacts, $start_gmt, $start_local ) {
 		global $wpdb;
 
-		$emails_to_check  = array_keys( $contacts );
+		$emails_map      = array();
+		$phones_to_check = array();
+
+		foreach ( $contacts as $c ) {
+			$em = isset( $c['email'] ) ? strtolower( trim( (string) $c['email'] ) ) : '';
+			if ( '' !== $em ) {
+				$emails_map[ $em ] = true;
+			} elseif ( ! empty( $c['phone'] ) ) {
+				$ph = Woo_Export_Contacts_Sanitizer::clean_phone( (string) $c['phone'] );
+				if ( '' !== $ph ) {
+					$phones_to_check[ $ph ] = true;
+				}
+			}
+		}
+
+		$emails_to_check  = array_keys( $emails_map );
 		$older_emails_map = array();
-		$chunks           = array_chunk( $emails_to_check, 400 );
 		$hpos_enabled     = class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' )
 			&& \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
 
-		foreach ( $chunks as $chunk ) {
-			$placeholders = implode( ',', array_fill( 0, count( $chunk ), '%s' ) );
+		if ( ! empty( $emails_to_check ) ) {
+			$chunks = array_chunk( $emails_to_check, 400 );
 
-			// A. Vérification comptes antérieurs
-			$old_users_sql   = $wpdb->prepare(
-				"SELECT DISTINCT LOWER(user_email) FROM {$wpdb->users}
-				 WHERE user_registered < %s AND LOWER(user_email) IN ($placeholders)",
-				array_merge( array( $start_gmt ), $chunk )
-			);
-			$found_old_users = $wpdb->get_col( $old_users_sql );
-			if ( ! empty( $found_old_users ) ) {
-				foreach ( $found_old_users as $oe ) {
-					$cleaned = strtolower( trim( $oe ) );
-					if ( ! empty( $cleaned ) ) {
-						$older_emails_map[ $cleaned ] = true;
-					}
-				}
-			}
+			foreach ( $chunks as $chunk ) {
+				$placeholders = implode( ',', array_fill( 0, count( $chunk ), '%s' ) );
 
-			// B. Vérification commandes antérieures
-			if ( $hpos_enabled ) {
-				$orders_table   = $wpdb->prefix . 'wc_orders';
-				$old_orders_sql = $wpdb->prepare(
-					"SELECT DISTINCT LOWER(billing_email) FROM {$orders_table}
-					 WHERE date_created_gmt < %s AND LOWER(billing_email) IN ($placeholders)",
+				// A. Vérification comptes antérieurs
+				$old_users_sql   = $wpdb->prepare(
+					"SELECT DISTINCT LOWER(user_email) FROM {$wpdb->users}
+					 WHERE user_registered < %s AND LOWER(user_email) IN ($placeholders)",
 					array_merge( array( $start_gmt ), $chunk )
 				);
-			} else {
-				$old_orders_sql = $wpdb->prepare(
-					"SELECT DISTINCT LOWER(em.meta_value)
-					 FROM {$wpdb->posts} p
-					 INNER JOIN {$wpdb->postmeta} em ON (p.ID = em.post_id AND em.meta_key = '_billing_email')
-					 WHERE p.post_type IN ('shop_order', 'shop_order_placehold')
-					   AND p.post_status NOT IN ('trash', 'auto-draft', 'wc-failed')
-					   AND p.post_date < %s
-					   AND LOWER(em.meta_value) IN ($placeholders)",
-					array_merge( array( $start_local ), $chunk )
-				);
-			}
+				$found_old_users = $wpdb->get_col( $old_users_sql );
+				if ( ! empty( $found_old_users ) ) {
+					foreach ( $found_old_users as $oe ) {
+						$cleaned = strtolower( trim( (string) $oe ) );
+						if ( '' !== $cleaned ) {
+							$older_emails_map[ $cleaned ] = true;
+						}
+					}
+				}
 
-			$found_old_orders = $wpdb->get_col( $old_orders_sql );
-			if ( ! empty( $found_old_orders ) ) {
-				foreach ( $found_old_orders as $oe ) {
-					$cleaned = strtolower( trim( $oe ) );
-					if ( ! empty( $cleaned ) ) {
-						$older_emails_map[ $cleaned ] = true;
+				// B. Vérification commandes antérieures par e-mail
+				if ( $hpos_enabled ) {
+					$orders_table   = $wpdb->prefix . 'wc_orders';
+					$old_orders_sql = $wpdb->prepare(
+						"SELECT DISTINCT LOWER(billing_email) FROM {$orders_table}
+						 WHERE status NOT IN ('wc-trash', 'wc-auto-draft', 'wc-failed', 'trash', 'auto-draft')
+						   AND date_created_gmt < %s
+						   AND LOWER(billing_email) IN ($placeholders)",
+						array_merge( array( $start_gmt ), $chunk )
+					);
+				} else {
+					$old_orders_sql = $wpdb->prepare(
+						"SELECT DISTINCT LOWER(em.meta_value)
+						 FROM {$wpdb->posts} p
+						 INNER JOIN {$wpdb->postmeta} em ON (p.ID = em.post_id AND em.meta_key = '_billing_email')
+						 WHERE p.post_type IN ('shop_order', 'shop_order_placehold')
+						   AND p.post_status NOT IN ('trash', 'auto-draft', 'wc-failed')
+						   AND p.post_date < %s
+						   AND LOWER(em.meta_value) IN ($placeholders)",
+						array_merge( array( $start_local ), $chunk )
+					);
+				}
+
+				$found_old_orders = $wpdb->get_col( $old_orders_sql );
+				if ( ! empty( $found_old_orders ) ) {
+					foreach ( $found_old_orders as $oe ) {
+						$cleaned = strtolower( trim( (string) $oe ) );
+						if ( '' !== $cleaned ) {
+							$older_emails_map[ $cleaned ] = true;
+						}
 					}
 				}
 			}
 		}
 
-		// Élimination des contacts existants
+		// Élimination des contacts dont l'e-mail existait déjà avant la période (quelle que soit la clé du tableau)
 		if ( ! empty( $older_emails_map ) ) {
-			foreach ( $older_emails_map as $old_email => $val ) {
-				if ( isset( $contacts[ $old_email ] ) ) {
-					unset( $contacts[ $old_email ] );
+			foreach ( $contacts as $key => $c ) {
+				$em = isset( $c['email'] ) ? strtolower( trim( (string) $c['email'] ) ) : '';
+				if ( '' !== $em && isset( $older_emails_map[ $em ] ) ) {
+					unset( $contacts[ $key ] );
 				}
 			}
+		}
+
+		// C. Vérification des téléphones antérieurs dans les commandes WooCommerce pour les contacts mobile-seul
+		if ( ! empty( $phones_to_check ) && ! empty( $contacts ) ) {
+			$older_phones_map = array();
+
+			if ( $hpos_enabled ) {
+				$orders_table    = $wpdb->prefix . 'wc_orders';
+				$addresses_table = $wpdb->prefix . 'wc_order_addresses';
+				$old_phones_sql  = $wpdb->prepare(
+					"SELECT DISTINCT a.phone
+					 FROM {$orders_table} o
+					 INNER JOIN {$addresses_table} a ON (o.id = a.order_id AND a.address_type = 'billing')
+					 WHERE o.status NOT IN ('wc-trash', 'wc-auto-draft', 'wc-failed', 'trash', 'auto-draft')
+					   AND o.date_created_gmt < %s
+					   AND a.phone IS NOT NULL AND a.phone != ''",
+					$start_gmt
+				);
+			} else {
+				$old_phones_sql = $wpdb->prepare(
+					"SELECT DISTINCT ph.meta_value
+					 FROM {$wpdb->posts} p
+					 INNER JOIN {$wpdb->postmeta} ph ON (p.ID = ph.post_id AND ph.meta_key = '_billing_phone')
+					 WHERE p.post_type IN ('shop_order', 'shop_order_placehold')
+					   AND p.post_status NOT IN ('trash', 'auto-draft', 'wc-failed')
+					   AND p.post_date < %s
+					   AND ph.meta_value IS NOT NULL AND ph.meta_value != ''",
+					$start_local
+				);
+			}
+
+			$found_old_phones = $wpdb->get_col( $old_phones_sql );
+			if ( ! empty( $found_old_phones ) ) {
+				foreach ( $found_old_phones as $raw_ph ) {
+					$clean_ph = Woo_Export_Contacts_Sanitizer::clean_phone( (string) $raw_ph );
+					if ( '' !== $clean_ph && isset( $phones_to_check[ $clean_ph ] ) ) {
+						$older_phones_map[ $clean_ph ] = true;
+					}
+				}
+			}
+
+			if ( ! empty( $older_phones_map ) ) {
+				foreach ( $contacts as $key => $c ) {
+					$em = isset( $c['email'] ) ? trim( (string) $c['email'] ) : '';
+					if ( '' !== $em || empty( $c['phone'] ) ) {
+						continue;
+					}
+					$clean_ph = Woo_Export_Contacts_Sanitizer::clean_phone( (string) $c['phone'] );
+					if ( '' !== $clean_ph && isset( $older_phones_map[ $clean_ph ] ) ) {
+						unset( $contacts[ $key ] );
+					}
+				}
+			}
+		}
+
+		// D. Filtre d'extension externe (ex. exclusion des clients ayant déjà une facture magasin antérieure)
+		$filtered = apply_filters( 'woo_export_contacts_filter_strictly_new', $contacts, $start_gmt, $start_local );
+		if ( is_array( $filtered ) ) {
+			$contacts = $filtered;
 		}
 	}
 
@@ -725,9 +838,13 @@ class Woo_Export_Contacts_Engine {
 			return;
 		}
 
-		foreach ( array_keys( $contacts ) as $email ) {
+		foreach ( array_keys( $contacts ) as $key ) {
+			$email = $contacts[ $key ]['email'] ?? '';
+			if ( ! is_string( $email ) || '' === trim( $email ) ) {
+				continue;
+			}
 			if ( Woo_Export_Contacts_Sanitizer::is_email_in_domains( $email, $excluded_domains ) ) {
-				unset( $contacts[ $email ] );
+				unset( $contacts[ $key ] );
 			}
 		}
 	}
@@ -773,12 +890,25 @@ class Woo_Export_Contacts_Engine {
 				}
 				$clean_phone = Woo_Export_Contacts_Sanitizer::clean_phone( $raw_phone );
 				if ( isset( $deduped_by_phone[ $clean_phone ] ) ) {
-					// Conserver la donnée la plus récente si disponible
-					$existing_date = strtotime( $deduped_by_phone[ $clean_phone ]['date'] ?? '1970-01-01' );
+					// Conserver la donnée la plus récente sans perdre l'e-mail ou le nom déjà connu
+					$existing      = $deduped_by_phone[ $clean_phone ];
+					$existing_date = strtotime( $existing['date'] ?? '1970-01-01' );
 					$current_date  = strtotime( $c['date'] ?? '1970-01-01' );
 					if ( $current_date > $existing_date ) {
-						$deduped_by_phone[ $clean_phone ] = $c;
+						$winner = $c;
+						$loser  = $existing;
+					} else {
+						$winner = $existing;
+						$loser  = $c;
 					}
+					if ( empty( $winner['email'] ) && ! empty( $loser['email'] ) ) {
+						$winner['email'] = $loser['email'];
+					}
+					if ( empty( $winner['first_name'] ) && empty( $winner['last_name'] ) ) {
+						$winner['first_name'] = $loser['first_name'] ?? '';
+						$winner['last_name']  = $loser['last_name'] ?? '';
+					}
+					$deduped_by_phone[ $clean_phone ] = $winner;
 				} else {
 					$deduped_by_phone[ $clean_phone ] = $c;
 				}
@@ -787,8 +917,10 @@ class Woo_Export_Contacts_Engine {
 		} else {
 			$valid_contacts = array();
 			foreach ( $contacts as $key => $c ) {
-				$email = isset( $c['email'] ) ? sanitize_email( strtolower( trim( $c['email'] ) ) ) : '';
+				$email = isset( $c['email'] ) ? sanitize_email( strtolower( trim( (string) $c['email'] ) ) ) : '';
 				if ( ! empty( $email ) && is_email( $email ) ) {
+					$valid_contacts[ $key ] = $c;
+				} elseif ( 'full' === $columns_mode && ! empty( $c['phone'] ) && Woo_Export_Contacts_Sanitizer::is_valid_phone( $c['phone'] ) ) {
 					$valid_contacts[ $key ] = $c;
 				}
 			}

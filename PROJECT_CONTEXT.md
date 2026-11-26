@@ -58,3 +58,8 @@
    - Option d'administration pour activer une case d'opt-in Newsletter au Checkout WooCommerce (conforme CNIL, compatible HPOS) + shortcode universel `[woo_newsletter_form]` léger en AJAX (compatible cache Cloudflare Enterprise / WP Rocket, protégé par Honeypot + jeton JS + rate-limit par IP hachée).
    - Source `newsletter_subscribers` (`Inscrits Newsletter (Natif)`) cochée par défaut dans l'interface d'export et fusionnée/dédoublonnée dans `Woo_Export_Contacts_Engine`.
 
+9. **Architecture Extensible Multi-Sources & Contacts Mobile-Seul (v2.6.0)** :
+   - Exposition de 3 filtres WordPress découplés (`woo_export_contacts_extra_sources`, `woo_export_contacts_collect_extra_contacts`, `woo_export_contacts_filter_strictly_new`) permettant aux mu-plugins clients (ex. `soyoo-ebp-automations.php` sur Le Comptoir de Cambaie) d'injecter des sources magasin/ERP avec badge et `earliest_date`.
+   - Support complet des contacts sans e-mail indexés par téléphone (`'phone:+262...'`, `'email' => ''`) dans les exports `manychat_whatsapp`, `manychat_whatsapp_email` et `full`.
+   - Sécurisation de `filter_excluded_domains()` et `filter_strictly_new()` sur les clés arbitraires, avec contrôle des téléphones antérieurs dans les commandes WooCommerce (HPOS et Legacy normalisés via `clean_phone`).
+

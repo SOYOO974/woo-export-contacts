@@ -385,6 +385,23 @@ class Woo_Export_Contacts_Admin {
 			}
 		}
 
+		// Sources additionnelles injectées par filtre (ex. Ventes Magasin ERP)
+		$extra_sources = apply_filters( 'woo_export_contacts_extra_sources', array() );
+		if ( ! is_array( $extra_sources ) ) {
+			$extra_sources = array();
+		}
+		foreach ( $extra_sources as $src_meta ) {
+			if ( ! is_array( $src_meta ) || empty( $src_meta['earliest_date'] ) || ! is_string( $src_meta['earliest_date'] ) ) {
+				continue;
+			}
+			if ( preg_match( '/^(\d{4}-\d{2}-\d{2})/', trim( $src_meta['earliest_date'] ), $m ) ) {
+				$extra_earliest_ymd = $m[1];
+				if ( $extra_earliest_ymd > '2000-01-01' && $extra_earliest_ymd < $earliest_date ) {
+					$earliest_date = $extra_earliest_ymd;
+				}
+			}
+		}
+
 		// Préfixe de tag par défaut
 		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
 		$is_confo    = false !== stripos( (string) $site_host, 'conforama' );
@@ -410,7 +427,7 @@ class Woo_Export_Contacts_Admin {
 			$excluded_domains_val = implode( "\n", $default_domains );
 		}
 
-		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.5.0';
+		$version_display = defined( 'WOO_EXPORT_CONTACTS_VERSION' ) ? WOO_EXPORT_CONTACTS_VERSION : '2.6.0';
 		$badge_text      = $is_confo ? 'Conforama.re &bull; v' . $version_display : esc_html( get_bloginfo( 'name' ) ) . ' &bull; v' . $version_display;
 		?>
 		<div class="wrap woo-export-contacts-wrap" style="max-width: 980px; margin-top: 25px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
@@ -703,6 +720,24 @@ class Woo_Export_Contacts_Admin {
 									<span>Alertes Rupture / Waitlist</span>
 								</label>
 								<?php endif; ?>
+								<?php foreach ( $extra_sources as $src_key => $src_meta ) : ?>
+									<?php
+									if ( ! is_string( $src_key ) || '' === $src_key || ! is_array( $src_meta ) || empty( $src_meta['label'] ) ) {
+										continue;
+									}
+									?>
+								<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+									<input type="checkbox" name="sources[]" value="<?php echo esc_attr( $src_key ); ?>" <?php checked( ! empty( $src_meta['default_checked'] ) ); ?>>
+									<span>
+										<?php echo esc_html( (string) $src_meta['label'] ); ?>
+										<?php if ( isset( $src_meta['badge'] ) && '' !== trim( (string) $src_meta['badge'] ) ) : ?>
+											<span style="display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4;">
+												<?php echo esc_html( (string) $src_meta['badge'] ); ?>
+											</span>
+										<?php endif; ?>
+									</span>
+								</label>
+								<?php endforeach; ?>
 							</div>
 						</div>
 
